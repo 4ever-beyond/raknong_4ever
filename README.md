@@ -2,7 +2,7 @@
 
 A high-performance, dynamic RSVP and identity management system built entirely in **Rust**. Designed for university communities to manage events, collect responses, and verify members — with a focus on fast onboarding and mobile-first UX.
 
-> **Status:** MVP Demo Mode — UI fully functional, SpacetimeDB backend wired (server-side), frontend SDK integration pending.
+> **Status:** **Live** — Dioxus 0.7 fullstack app with PostgreSQL backend, deployed via `dx serve`.
 
 ---
 
@@ -10,8 +10,9 @@ A high-performance, dynamic RSVP and identity management system built entirely i
 
 | Layer | Technology | Version |
 |-------|-----------|---------|
-| Backend | [SpacetimeDB](https://spacetimedb.com/) | v2 |
-| Frontend | [Dioxus](https://dioxuslabs.com/) | 0.7 |
+| Backend | [Dioxus Server Functions](https://dioxuslabs.com/) + [SQLx](https://github.com/launchbadge/sqlx) | 0.7 / 0.8 |
+| Frontend | [Dioxus](https://dioxuslabs.com/) (WASM) | 0.7 |
+| Database | [PostgreSQL](https://www.postgresql.org/) | 15+ |
 | Styling | [Tailwind CSS](https://tailwindcss.com/) | v4 (via Dioxus CLI) |
 | Language | Rust | 2021 Edition |
 
@@ -26,33 +27,43 @@ A high-performance, dynamic RSVP and identity management system built entirely i
 │  │        Dioxus 0.7 Frontend (client/)        │ │
 │  │                                              │ │
 │  │  Loading → Onboarding → EventView → Submitted│ │
+│  │         · Admin Dashboard (Users + Responses) │ │
 │  │                                              │ │
-│  │  • Progressive Profiling (3 required fields) │ │
-│  │  • Dynamic RSVP Forms (text/select/radio)    │ │
+│  │  • Progressive Profiling (4 required fields) │ │
+│  │  • Dynamic RSVP Forms (text/select)          │ │
 │  │  • Passcode Security Gate                    │ │
 │  └──────────────┬──────────────────────────────┘ │
-│                 │ WebSocket (TODO)                │
+│                 │ HTTP POST (server functions)    │
 └─────────────────┼────────────────────────────────┘
                   │
 ┌─────────────────▼────────────────────────────────┐
-│         SpacetimeDB Server (spacetimedb/)         │
+│        Dioxus Server (same binary, server build)  │
 │                                                   │
-│  Tables:  UserProfile · Event · EventQuestion     │
-│           EventResponse                           │
+│  #[server] Functions:                             │
+│    register_profile · submit_response             │
+│    get_events · get_user_profile                  │
+│    get_all_users · get_all_responses              │
+│    toggle_verification · delete_event_response    │
+│    check_existing_response                        │
 │                                                   │
-│  Reducers:  init · register_profile               │
-│             submit_response · toggle_verification  │
-│             create_event · add_event_question      │
-│             deactivate_event · delete_event_response│
+│  Auto-registered at POST /api/<name>              │
+└─────────────────┬────────────────────────────────┘
+                  │ sqlx::PgPool
+┌─────────────────▼────────────────────────────────┐
+│              PostgreSQL Database                  │
+│                                                   │
+│  Tables:  user_profile · event                    │
+│           event_question · event_response         │
 └───────────────────────────────────────────────────┘
 ```
 
 ### Key Design Decisions
 
-- **Progressive Profiling** — Users provide only a nickname, year, and contact handle to get started. Student ID is optional to prevent alumni drop-off.
-- **Identity-First** — SpacetimeDB's cryptographic `Identity` serves as the primary key for user profiles, preventing collisions and enabling persistent sessions.
+- **Session-based Identity** — Uses `crypto.randomUUID()` stored in localStorage as session ID. No login system required; users are identified by their browser session.
+- **Progressive Profiling** — Users provide nickname, entry year, phone, Instagram, and Line ID to get started. All fields required for a complete profile.
 - **Passcode Security** — Each event has a shared passcode that must be entered before an RSVP is accepted. This prevents unauthorized external sign-ups.
-- **Dynamic Forms** — Event questions are stored in the database and rendered client-side as text inputs, select dropdowns, or radio button groups.
+- **Dynamic Forms** — Event questions are stored in the database and rendered client-side as text inputs or select dropdowns.
+- **Single Binary Fullstack** — The `#[server]` macro compiles function bodies only on the server build, and auto-generates HTTP client stubs for the WASM build.
 
 ---
 
@@ -62,41 +73,21 @@ A high-performance, dynamic RSVP and identity management system built entirely i
 4ever/
 ├── README.md                              ← You are here
 ├── global_community_platform_rust.md      ← Architecture specification
+├── implement_plan.md                      ← Implementation plan
 ├── .gitignore
 │
-├── spacetimedb/                           ← Backend (SpacetimeDB v2 module)
-│   ├── Cargo.toml
-│   └── src/
-│       └── lib.rs                         ← 4 tables + 7 reducers + init seeder
+├── spacetimedb/                           ← Legacy (no longer used, safe to delete)
 │
-└── client/                                ← Frontend (Dioxus 0.7 web app)
-    ├── Cargo.toml                         ← dioxus = "0.7.1", with feature flags
-    ├── Cargo.lock                         ← Pinned dependencies
+└── client/                                ← Fullstack Dioxus 0.7 app
+    ├── Cargo.toml                         ← dioxus 0.7 + sqlx + chrono (feature-gated)
     ├── Dioxus.toml                        ← Dioxus CLI configuration
-    ├── tailwind.css                       ← Root-level Tailwind entry
     ├── assets/
     │   ├── main.css                       ← Custom styles (scrollbar, animations)
     │   └── tailwind.css                   ← @import "tailwindcss"
     └── src/
-        ├── main.rs                        ← Full UI: 5 views + App state machine
-        ├── i18n.rs                        ← Thai/English locale strings
-        └── module_bindings/               ← Auto-generated SpacetimeDB SDK types
-            ├── mod.rs
-            ├── event_type.rs
-            ├── event_table.rs
-            ├── event_question_type.rs
-            ├── event_question_table.rs
-            ├── event_response_type.rs
-            ├── event_response_table.rs
-            ├── user_profile_type.rs
-            ├── user_profile_table.rs
-            ├── register_profile_reducer.rs
-            ├── submit_response_reducer.rs
-            ├── create_event_reducer.rs
-            ├── add_event_question_reducer.rs
-            ├── deactivate_event_reducer.rs
-            ├── delete_event_response_reducer.rs
-            └── toggle_verification_reducer.rs
+        ├── main.rs                        ← UI: 5 views + Admin + server entry point
+        ├── backend.rs                     ← Shared types + #[server] functions + DB pool
+        └── i18n.rs                        ← Thai/English locale strings
 ```
 
 ---
@@ -106,9 +97,9 @@ A high-performance, dynamic RSVP and identity management system built entirely i
 | Tool | Install Command | Notes |
 |------|----------------|-------|
 | **Rust** | `curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \| sh` | rustup recommended |
-| **wasm32-unknown-unknown** | `rustup target add wasm32-unknown-unknown` | Required for both modules |
-| **SpacetimeDB CLI** | `curl -sSf https://install.spacetimedb.com \| bash` | v2.1.0+ |
+| **wasm32-unknown-unknown** | `rustup target add wasm32-unknown-unknown` | Required for WASM build |
 | **Dioxus CLI** | `curl -sSL https://dioxus.dev/install.sh \| bash` | v0.7.4+ (prebuilt binary recommended) |
+| **PostgreSQL** | `brew install postgresql@15` (macOS) | v15+ recommended |
 
 > **Tip:** Installing `dioxus-cli` via `cargo install` compiles 774 dependencies and may OOM on machines with <16 GB RAM. Use the prebuilt binary instead.
 
@@ -116,223 +107,320 @@ A high-performance, dynamic RSVP and identity management system built entirely i
 
 ## Getting Started
 
-### 1. Start SpacetimeDB (Backend)
+### 1. Start PostgreSQL
 
 ```bash
-# Start the in-memory database server
-spacetime start --in-memory
+# macOS (Homebrew)
+brew services start postgresql@15
+
+# Linux (systemd)
+sudo systemctl start postgresql
 ```
 
-This starts the server at `http://localhost:3000`.
-
-### 2. Build & Publish the Server Module
+### 2. Create the Database
 
 ```bash
-cd spacetimedb/
-
-# Build to WASM
-spacetime build --debug
-
-# Publish to local server
-spacetime publish community-platform -y -s http://localhost:3000
+createdb forever
 ```
 
-The `init` reducer automatically seeds:
-- **Event:** "4EVER รวมตัวกินสเต็กเด็กอ้วน" (passcode: `4ever2026`)
-- **3 Questions:** Menu Selection (select), Dietary restrictions (text), Plus-one (radio)
+The application will automatically create tables and seed default data on first start.
 
-### 3. Verify the Backend
-
-```bash
-# Check seeded data
-spacetime sql -s http://localhost:3000 community-platform "SELECT * FROM event"
-spacetime sql -s http://localhost:3000 community-platform "SELECT * FROM event_question"
-
-# Test registration
-spacetime call -s http://localhost:3000 community-platform register_profile '["Alice", "Year 2", "@alice_ig", "66101234"]'
-
-# Test RSVP (correct passcode — should succeed)
-spacetime call -s http://localhost:3000 community-platform submit_response '[1, "4ever2026", "{\"1\":\"กลุ่มไลน์\",\"2\":\"สเต็กหมู M\"}"]'
-
-# Test RSVP (wrong passcode — should be BLOCKED)
-spacetime call -s http://localhost:3000 community-platform submit_response '[1, "wrong", "{}"]'
-```
-
-### 4. Run the Frontend
+### 3. Run the App
 
 ```bash
 cd client/
 
 # Development server with hot reload
-dx serve
+dx serve --platform web
 
-# Or build for production
-dx build --platform web --release
+# Or with a custom database URL
+DATABASE_URL="postgres://user@localhost:5432/forever" dx serve --platform web
 ```
 
-Open `http://127.0.0.1:8080` in your browser.
+Open `http://localhost:8080` in your browser.
+
+### 4. (Optional) Set DATABASE_URL permanently
+
+```bash
+# Create .env in the client directory
+echo 'DATABASE_URL=postgres://localhost:5432/forever' > client/.env
+```
+
+The default connection string is `postgres://localhost:5432/forever` (uses current OS user, no password on local socket).
 
 ---
 
-## API Reference — SpacetimeDB Reducers
+## Seeded Data
 
-### `init` *(automatic)*
-Called when the module is first published. Seeds the default event and questions.
+On first server start, `init_db()` automatically seeds:
+
+- **Event:** "4EVER รวมตัวกินสเต็กเด็กอ้วน" (passcode: `4ever2026`)
+  - Date: 08-04-2569
+  - Location: ศาลายา ซอย 11
+- **Question 1:** "เห็นข่าวการเรียกรวมตัวจากที่ไหนเอ่ย" (select: กลุ่มไลน์, อินสตาแกรม, เพื่อนบอก, Facebook, อื่นๆ)
+- **Question 2:** "เมนูที่จะกินค่าาา" (select: สเต็กหมู/ไก่ S/M/L, สเต็กปลาแซลมอน, เมนูอื่นๆ)
+
+---
+
+## API Reference — Server Functions
+
+All endpoints are registered as `POST /api/<function_name>`.
 
 ### `register_profile`
-Creates a user profile with minimal required fields.
+Creates a user profile.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
+| `session_id` | `String` | ✅ | Browser session UUID |
 | `nickname` | `String` | ✅ | Display name |
-| `entry_year` | `String` | ✅ | "Year 1"–"Year 5+" or "Alumni" |
-| `contact_channel` | `String` | ✅ | Line ID or Instagram handle |
-| `student_id` | `Option<String>` | ❌ | e.g. "66101234" |
+| `entry_year` | `String` | ✅ | e.g. "2560" |
+| `phone` | `String` | ✅ | Phone number |
+| `instagram` | `String` | ✅ | Instagram handle |
+| `line_id` | `String` | ✅ | LINE ID |
 
-Guards: prevents duplicate registration (checked by `Identity`), validates non-empty required fields.
+Guards: prevents duplicate session, validates all fields non-empty.
 
 ### `submit_response`
 Submits an RSVP response with passcode verification.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `event_id` | `u64` | ✅ | Target event ID |
+| `event_id` | `i64` | ✅ | Target event ID |
+| `session_id` | `String` | ✅ | User's session UUID |
 | `passcode` | `String` | ✅ | Must match event's stored passcode |
-| `answers` | `String` | ✅ | JSON mapping question IDs to answers |
+| `answers` | `String` | ✅ | JSON mapping question labels to answers |
 
 Guards: verifies profile exists, event exists, event is active, passcode matches, no duplicate RSVP, non-empty answers.
 
-### `create_event`
-Creates a new community event.
+### `get_events`
+Returns all active events with their questions.
 
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `title` | `String` | ✅ | Event name |
-| `description` | `String` | ❌ | Event details |
-| `event_date` | `String` | ✅ | e.g. "2025-06-15" |
-| `priority` | `u32` | ❌ | Higher = shown first |
-| `passcode` | `String` | ✅ | Shared access code |
+**Response:** `Vec<EventWithQuestions>` — array of event objects, each containing an `event` and `questions` array.
 
-### `add_event_question`
-Attaches a dynamic question to an event.
+### `get_user_profile`
+Returns a user profile by session ID.
 
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `event_id` | `u64` | ✅ | Target event |
-| `label` | `String` | ✅ | Question text |
-| `field_type` | `String` | ✅ | "text", "select", or "radio" |
-| `options` | `Option<String>` | ❌ | JSON array for select/radio choices |
-| `is_required` | `bool` | ✅ | Whether answer is mandatory |
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `session_id` | `String` | User's session UUID |
+
+**Response:** `Option<UserProfile>` — the profile if found, otherwise `null`.
+
+### `get_all_users`
+Returns all user profiles (admin).
+
+**Response:** `Vec<UserProfile>`
+
+### `get_all_responses`
+Returns all RSVP responses (admin).
+
+**Response:** `Vec<EventResponse>`
 
 ### `toggle_verification`
-Toggles a user's `is_verified` status (admin utility).
+Toggles a user's `is_verified` status.
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `target_identity` | `Identity` | The user to toggle |
-
-### `deactivate_event`
-Soft-deletes an event by setting `is_active = false`.
-
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| `event_id` | `u64` | Event to deactivate |
+| `session_id` | `String` | Target user's session UUID |
 
 ### `delete_event_response`
-Removes a specific RSVP response (admin utility).
+Deletes a specific RSVP response.
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `response_id` | `u64` | Response to delete |
+| `response_id` | `i64` | Response ID to delete |
+
+### `check_existing_response`
+Checks if a user already submitted an RSVP for an event.
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `event_id` | `i64` | Target event |
+| `session_id` | `String` | User's session UUID |
+
+**Response:** `bool` — `true` if response exists.
 
 ---
 
-## Current State: Demo Mode
+## Database Schema
 
-The frontend is **fully functional in the browser** but operates in **demo mode** — all data lives in Dioxus reactive signals (browser memory). No data is persisted to SpacetimeDB from the frontend.
+```sql
+-- Auto-created by init_db() on first server start
+
+CREATE TABLE user_profile (
+    id            SERIAL PRIMARY KEY,
+    session_id    TEXT UNIQUE NOT NULL,
+    nickname      TEXT NOT NULL,
+    entry_year    TEXT NOT NULL,
+    phone         TEXT NOT NULL,
+    instagram     TEXT NOT NULL,
+    line_id       TEXT NOT NULL,
+    is_verified   BOOLEAN NOT NULL DEFAULT FALSE,
+    created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE event (
+    id            SERIAL PRIMARY KEY,
+    title         TEXT NOT NULL,
+    description   TEXT NOT NULL DEFAULT '',
+    event_date    TEXT NOT NULL DEFAULT '',
+    priority      INTEGER NOT NULL DEFAULT 0,
+    is_active     BOOLEAN NOT NULL DEFAULT TRUE,
+    passcode      TEXT NOT NULL,
+    created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE event_question (
+    id            SERIAL PRIMARY KEY,
+    event_id      INTEGER NOT NULL REFERENCES event(id),
+    label         TEXT NOT NULL,
+    field_type    TEXT NOT NULL DEFAULT 'text',
+    options       TEXT,
+    is_required   BOOLEAN NOT NULL DEFAULT TRUE
+);
+
+CREATE TABLE event_response (
+    id            SERIAL PRIMARY KEY,
+    event_id      INTEGER NOT NULL REFERENCES event(id),
+    session_id    TEXT NOT NULL,
+    answers       TEXT NOT NULL,
+    submitted_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+```
+
+---
+
+## Feature Flags
+
+```toml
+[features]
+default = []
+web = ["dioxus/web"]
+desktop = ["dioxus/desktop"]
+mobile = ["dioxus/mobile"]
+server = ["dioxus/server", "dep:sqlx", "dep:chrono"]
+```
+
+| Flag | Effect |
+|------|--------|
+| `web` | Builds WASM client for browsers |
+| `server` | Builds server binary with PostgreSQL + all server function bodies |
+| `desktop` | Desktop app (WebView) |
+| `mobile` | Mobile app (iOS/Android WebView) |
+
+When using `dx serve --platform web`, the CLI auto-detects the `fullstack` feature and builds both the server binary (with `server` feature) and the WASM client (with `web` feature).
+
+---
+
+## Testing API Endpoints
+
+```bash
+# Get all active events
+curl -X POST http://localhost:8080/api/get_events
+
+# Register a profile
+curl -X POST http://localhost:8080/api/register_profile \
+  -H "Content-Type: application/json" \
+  -d '{"session_id":"test-001","nickname":"Alice","entry_year":"2560","phone":"0812345678","instagram":"@alice","line_id":"alice_line"}'
+
+# Submit RSVP (correct passcode)
+curl -X POST http://localhost:8080/api/submit_response \
+  -H "Content-Type: application/json" \
+  -d '{"event_id":1,"session_id":"test-001","passcode":"4ever2026","answers":"{\"เห็นข่าว\":\"กลุ่มไลน์\",\"เมนู\":\"สเต็กหมู M\"}"}'
+
+# Check if already submitted
+curl -X POST http://localhost:8080/api/check_existing_response \
+  -H "Content-Type: application/json" \
+  -d '{"event_id":1,"session_id":"test-001"}'
+
+# Get all users (admin)
+curl -X POST http://localhost:8080/api/get_all_users
+
+# Toggle verification
+curl -X POST http://localhost:8080/api/toggle_verification \
+  -H "Content-Type: application/json" \
+  -d '{"session_id":"test-001"}'
+```
+
+---
+
+## Current State: Live
+
+The frontend communicates with the server via auto-generated HTTP client stubs from the `#[server]` macro.
 
 | User Action | What Happens | Persisted? |
 |-------------|-------------|:----------:|
-| Fill onboarding form | Creates `UserProfile` in local signal | ❌ |
-| Submit RSVP with passcode | Validates passcode locally, shows confirmation | ❌ |
-| Events & questions | Hardcoded via `seed_demo_data()` | ❌ |
-
-All locations requiring SpacetimeDB SDK integration are marked with `// TODO:` comments in `client/src/main.rs`.
+| Fill onboarding form | Calls `register_profile` → profile stored in PostgreSQL | ✅ |
+| Submit RSVP with passcode | Calls `submit_response` → server validates passcode | ✅ |
+| Events & questions | Fetched via `get_events` server function | ✅ |
+| Admin dashboard | Fetches users + responses via server functions | ✅ |
+| Toggle verification | Calls `toggle_verification` | ✅ |
+| Delete response | Calls `delete_event_response` | ✅ |
 
 ---
 
 ## Roadmap
 
-### 🔴 Priority — Wire SpacetimeDB SDK
+See [`implement_plan.md`](./implement_plan.md) for the full implementation plan with phase tracking.
 
-1. Add `spacetimedb-sdk` dependency to `client/Cargo.toml`
-2. Open WebSocket connection to `ws://localhost:3000`
-3. Subscribe to tables (`event`, `event_question`, `user_profile`, `event_response`)
-4. Replace `seed_demo_data()` with real subscription callbacks
-5. Replace onboarding `spawn()` with `conn.call_reducer("register_profile", ...)`
-6. Replace RSVP submit with `conn.call_reducer("submit_response", ...)`
+### 🔴 Priority — Stabilization
+1. End-to-end testing with multiple browser clients
+2. Admin authentication (restrict to verified users)
+3. Loading spinners for server function calls
+4. Error handling UI for database connection failures
 
 ### 🟡 Polish
-
-- Admin panel (toggle verification, create events via UI)
-- Profile editing (add `student_id` after initial registration)
-- Production build optimization (`dx build --platform web --release`)
-- Fix `LoadingView` snake_case warning (rename to `loading_view`)
+- Multi-event support with event listing page
+- Event creation from admin dashboard
+- Profile editing page
+- Notification/toast system for errors
+- Better mobile responsiveness for admin tables
+- `use_server_future` for data fetching with SSR support
 
 ### 🟢 Future
-
-- Deploy to SpacetimeDB MainCloud for production
-- Real authentication beyond Identity-based approach
-- Multi-event support with event listing page
+- Deploy to production (Docker + PostgreSQL)
+- Real authentication (OAuth / Line Login)
 - Push notification system for new events
-- i18n toggle (Thai/English strings already exist in `i18n.rs`)
-- Mobile app build via `dx serve --platform mobile`
+- QR code check-in at events
+- Mobile app build (`dx serve --platform mobile`)
+- Photo gallery for past events
+- Line/Discord bot integration
+- Server-sent events for real-time admin dashboard
 
 ---
 
-## Git Commit Strategy
+## Migration History
 
-```
-Step 1: git add .gitignore global_community_platform_rust.md
-        git commit -m "docs: add project spec and gitignore"
+This project was originally built with **SpacetimeDB** (WebSocket-based real-time database). It was migrated to **Dioxus Fullstack + PostgreSQL** to resolve persistent WebSocket disconnection issues and to align with the Dioxus 0.7 recommended architecture.
 
-Step 2: git add spacetimedb/
-        git commit -m "feat(server): SpacetimeDB v2 module with 4 tables and 7 reducers"
-
-Step 3: git add client/
-        git commit -m "feat(client): Dioxus 0.7 frontend with demo-mode UI"
-
-Step 4: git add README.md
-        git commit -m "docs: add comprehensive README with setup instructions"
-
-Step 5: (after review)
-        git remote add origin https://github.com/<user>/4ever.git
-        git push -u origin main
-```
+| Aspect | Before (SpacetimeDB) | After (PostgreSQL) |
+|--------|---------------------|-------------------|
+| Connection | WebSocket (disconnects) | HTTP POST (stateless) |
+| Backend | SpacetimeDB reducers | Dioxus `#[server]` functions |
+| Database | In-memory (SpacetimeDB) | PostgreSQL (persistent) |
+| Identity | Cryptographic `Identity` | Session UUID (localStorage) |
+| Real-time | Table subscriptions | Polling (future: SSE) |
+| Module bindings | Auto-generated SDK | Auto-generated HTTP stubs |
 
 ---
 
 ## Development Notes
 
-### SpacetimeDB v2 Syntax (Important)
+### Dioxus 0.7 Fullstack Conventions
 
-This project uses SpacetimeDB **v2**, which has breaking syntax differences from v1:
+- `#[server(endpoint = "name")]` — defines a server function; the macro auto-generates client stubs for WASM
+- Server function bodies are only compiled when the `server` feature is active
+- `dioxus::serve(|| async { Ok(dioxus::server::router(App)) })` — launches the fullstack server
+- `dioxus::launch(App)` — launches the client-only app
+- All `sqlx` / `chrono` dependencies are feature-gated behind `server`
+- `SyncSignal<T>` provides interior mutability that works on both server and client
 
-```rust
-// v1 (BROKEN)                          // v2 (CORRECT — used in this project)
-#[table(public, name = "user_profile")]  #[spacetimedb::table(accessor = user_profile, public)]
-ctx.sender                               ctx.sender()
-ctx.timestamp()                          ctx.timestamp        // field, not method
-// Also: use spacetimedb::Table; must be in scope for .insert(), .iter()
-```
+### PostgreSQL Connection
 
-### Dioxus 0.7 Conventions
-
-- No `index.html` — Dioxus CLI auto-generates it
-- Tailwind via `@import "tailwindcss"` in CSS files, not CDN scripts
-- Assets in `assets/` directory, loaded with `asset!()` macro
-- Entry point: `dioxus::launch(App)` not `launch(App)`
-- Minimal `Dioxus.toml` — only `[application]`, `[web.app]`, `[web.resource]` sections
+- Connection pool is thread-local (`PgPool` behind `RefCell`)
+- Tables are auto-created via `CREATE TABLE IF NOT EXISTS` on server start
+- Seed data is only inserted when the `event` table is empty
+- No migrations framework — schema is managed inline in `init_db()`
 
 ---
 
