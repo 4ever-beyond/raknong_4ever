@@ -30,6 +30,10 @@ const TAILWIND_CSS: Asset = asset!("/assets/tailwind.css");
 const INSTAGRAM_URL: &str = "https://www.instagram.com/raknong_4ever";
 const MENU_URL: &str = "https://linktr.ee/steakdekuanwattana";
 
+/// Admin dashboard passcode. Change this to your own secret value.
+/// In production, this should come from an environment variable.
+const ADMIN_PASSCODE: &str = "4ever-admin-2026";
+
 // =============================================================================
 // VIEW STATE
 // =============================================================================
@@ -40,6 +44,8 @@ pub enum ViewState {
     Onboarding,
     EventView,
     Submitted,
+    /// Passcode gate before granting admin access
+    AdminAuth,
     Admin,
 }
 
@@ -228,7 +234,7 @@ fn App() -> Element {
     let locale = get_locale(lang);
     let current_state = (state.view_state)();
     let error = (state.error_message)();
-    let is_admin = matches!(current_state, ViewState::Admin);
+    let is_admin = matches!(current_state, ViewState::Admin | ViewState::AdminAuth);
     let data_loaded = (state.data_loaded)();
 
     rsx! {
@@ -269,10 +275,7 @@ fn App() -> Element {
                                 if is_admin {
                                     state.view_state.set(ViewState::EventView);
                                 } else {
-                                    spawn(async move {
-                                        let _ = load_admin_data(state).await;
-                                    });
-                                    state.view_state.set(ViewState::Admin);
+                                    state.view_state.set(ViewState::AdminAuth);
                                 }
                             },
                             if is_admin { "← {locale.admin_back_to_event}" } else { "{locale.admin_nav_button}" }
@@ -326,6 +329,7 @@ fn App() -> Element {
                     (true, ViewState::Onboarding) => rsx! { OnboardingView {} },
                     (true, ViewState::EventView) => rsx! { EventView {} },
                     (true, ViewState::Submitted) => rsx! { SubmittedView {} },
+                    (_, ViewState::AdminAuth) => rsx! { AdminAuthView {} },
                     (true, ViewState::Admin) => rsx! { AdminView {} },
                 }
             }
@@ -375,6 +379,10 @@ fn LoadingView() -> Element {
                 div {
                     class: "w-16 h-16 border-4 border-indigo-500/30 border-t-indigo-400 rounded-full animate-spin",
                 }
+            }
+            p {
+                class: "text-sm text-indigo-400 animate-pulse font-medium tracking-wide",
+                "{locale.connecting}"
             }
             div {
                 class: "text-center space-y-2",
@@ -664,7 +672,15 @@ fn EventView() -> Element {
                     state.view_state.set(ViewState::Submitted);
                 }
                 Err(e) => {
-                    state.error_message.set(Some(format!("RSVP failed: {e}")));
+                    let msg = e.to_string();
+                    if msg.contains("Invalid passcode") {
+                        state
+                            .error_message
+                            .set(Some(loc.err_passcode_invalid.to_string()));
+                        passcode_error.set(true);
+                    } else {
+                        state.error_message.set(Some(format!("RSVP failed: {e}")));
+                    }
                 }
             }
             is_submitting.set(false);
@@ -816,7 +832,9 @@ fn EventView() -> Element {
                                     class: "block text-sm font-medium text-slate-300",
                                     "{question.label}"
                                     if question.is_required {
-                                        span { class: "text-red-400 ml-1", "*" }
+                                        span { class: "text-red-400", "{locale.required_marker}" }
+                                    } else {
+                                        span { class: "text-slate-600 text-xs ml-1", "{locale.optional_label}" }
                                     }
                                 }
 
@@ -1039,6 +1057,101 @@ fn SubmittedView() -> Element {
                 div {
                     class: "mt-10",
                     p { class: "text-slate-500 text-base", "{locale.see_you}" }
+                }
+            }
+        }
+    }
+}
+
+// =============================================================================
+// ADMIN AUTHENTICATION VIEW
+// =============================================================================
+
+/// Passcode gate that must be cleared before accessing the admin dashboard.
+#[component]
+fn AdminAuthView() -> Element {
+    let mut state: AppState = use_context();
+    let locale = get_locale((state.language)());
+    let mut admin_passcode = use_signal(String::new);
+    let mut auth_error = use_signal(|| false);
+
+    rsx! {
+        div {
+            class: "flex items-center justify-center py-20 px-2",
+            div {
+                class: "w-full max-w-sm",
+                div {
+                    class: "bg-white/[0.04] backdrop-blur-xl border border-white/10 rounded-2xl p-8 shadow-2xl",
+
+                    // Header
+                    div {
+                        class: "text-center mb-8",
+                        div {
+                            class: "w-16 h-16 bg-amber-500/20 rounded-full flex items-center justify-center mx-auto mb-4",
+                            span { class: "text-3xl", "🔒" }
+                        }
+                        h2 { class: "text-2xl font-bold text-white", "{locale.admin_auth_title}" }
+                        p {
+                            class: "text-slate-400 text-sm mt-2",
+                            "{locale.admin_nav_button}"
+                        }
+                    }
+
+                    // Passcode field
+                    div {
+                        class: "space-y-4",
+                        div {
+                            class: "space-y-1.5",
+                            label {
+                                class: "block text-sm font-medium text-amber-300",
+                                "{locale.admin_auth_passcode_label}"
+                            }
+                            input {
+                                class: if auth_error() {
+                                    "w-full bg-red-500/10 border-2 border-red-500/40 rounded-xl px-4 py-3 text-white placeholder-slate-600 focus:outline-none focus:ring-2 focus:ring-red-500 transition"
+                                } else {
+                                    "w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-white placeholder-slate-600 focus:outline-none focus:ring-2 focus:ring-amber-500 focus:border-transparent transition"
+                                },
+                                r#type: "password",
+                                placeholder: "{locale.admin_auth_passcode_placeholder}",
+                                value: "{admin_passcode}",
+                                oninput: move |e| {
+                                    admin_passcode.set(e.value());
+                                    auth_error.set(false);
+                                    state.error_message.set(None);
+                                },
+                            }
+                        }
+
+                        // Error message
+                        {auth_error().then(|| rsx! {
+                            p {
+                                class: "text-red-400 text-xs font-medium",
+                                "{locale.admin_auth_error}"
+                            }
+                        })}
+
+                        // Submit
+                        button {
+                            class: "w-full bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 active:from-amber-700 active:to-orange-700 text-white font-semibold py-3 rounded-xl shadow-lg shadow-amber-500/25 transition-all duration-200 transform hover:scale-[1.01] active:scale-[0.99] cursor-pointer",
+                            onclick: move |_| {
+                                let pc = admin_passcode.read().clone();
+                                if pc.trim() == ADMIN_PASSCODE {
+                                    auth_error.set(false);
+                                    let mut state = state;
+                                    spawn(async move {
+                                        let _ = load_admin_data(state).await;
+                                    });
+                                    state.view_state.set(ViewState::Admin);
+                                } else {
+                                    auth_error.set(true);
+                                    state.error_message.set(None);
+                                }
+                                admin_passcode.set(String::new());
+                            },
+                            "{locale.admin_auth_submit}"
+                        }
+                    }
                 }
             }
         }
