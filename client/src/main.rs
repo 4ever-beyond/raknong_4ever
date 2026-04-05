@@ -1140,9 +1140,17 @@ fn AdminAuthView() -> Element {
                                     auth_error.set(false);
                                     let mut state = state;
                                     spawn(async move {
-                                        let _ = load_admin_data(state).await;
+                                        match load_admin_data(state).await {
+                                            Ok(()) => {
+                                                log::info!("Admin data loaded successfully");
+                                                state.view_state.set(ViewState::Admin);
+                                            }
+                                            Err(e) => {
+                                                log::error!("Failed to load admin data: {e}");
+                                                state.error_message.set(Some(format!("Failed to load admin data: {e}")));
+                                            }
+                                        }
                                     });
-                                    state.view_state.set(ViewState::Admin);
                                 } else {
                                     auth_error.set(true);
                                     state.error_message.set(None);
