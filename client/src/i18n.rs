@@ -182,6 +182,56 @@ pub struct Locale {
     // ── Required Marker ───────────────────────────────────────────────────
     /// Visual marker appended to required-field labels.
     pub required_marker: &'static str,
+
+    // ── Admin Dashboard ──────────────────────────────────────────────────
+    /// Admin dashboard title
+    pub admin_title: &'static str,
+    /// Total users stat label
+    pub admin_total_users: &'static str,
+    /// Total responses stat label
+    pub admin_total_responses: &'static str,
+    /// Verified users label
+    pub admin_verified_users: &'static str,
+    /// Pending users label
+    pub admin_pending_users: &'static str,
+    /// Users table column header
+    pub admin_col_nickname: &'static str,
+    /// Year column
+    pub admin_col_year: &'static str,
+    /// Phone column
+    pub admin_col_phone: &'static str,
+    /// Instagram column
+    pub admin_col_instagram: &'static str,
+    /// Line column
+    pub admin_col_line: &'static str,
+    /// Status column
+    pub admin_col_status: &'static str,
+    /// Action column
+    pub admin_col_action: &'static str,
+    /// Responses tab
+    pub admin_responses_tab: &'static str,
+    /// Users tab
+    pub admin_users_tab: &'static str,
+    /// Toggle verify button text
+    pub admin_toggle_verify: &'static str,
+    /// Revoke verify button text
+    pub admin_revoke_verify: &'static str,
+    /// Response nickname column
+    pub admin_col_responder: &'static str,
+    /// Response answers column
+    pub admin_col_answers: &'static str,
+    /// Response date column
+    pub admin_col_submitted_at: &'static str,
+    /// Delete response button
+    pub admin_delete_response: &'static str,
+    /// Admin nav button text (shown in header)
+    pub admin_nav_button: &'static str,
+    /// Back to event button
+    pub admin_back_to_event: &'static str,
+    /// No responses yet
+    pub admin_no_responses: &'static str,
+    /// No users yet
+    pub admin_no_users: &'static str,
 }
 
 impl Locale {
@@ -216,12 +266,12 @@ pub fn get_locale(lang: Language) -> Locale {
             app_name: "4ever & Beyond",
             tagline: "รวมตัว สังสรรค์ กินสเต็ก!",
             connecting: "กำลังเชื่อมต่อ...",
-            footer_text: "สร้างด้วย Rust · SpacetimeDB · Dioxus",
+            footer_text: "สร้างด้วย Rust · PostgreSQL · Dioxus",
             data_safe: "ข้อมูลปลอดภัยแน่นอนจ้ะ พี่โอโซนรับประกัน",
 
             // Loading View
             loading_title: "กำลังเชื่อมต่อกับชุมชน...",
-            loading_subtitle: "กำลังยืนยันตัวตนกับ SpacetimeDB",
+            loading_subtitle: "กำลังโหลดข้อมูล...",
 
             // Onboarding
             onboard_title: "ลงทะเบียนเข้าร่วม",
@@ -285,6 +335,32 @@ pub fn get_locale(lang: Language) -> Locale {
 
             // Required Marker
             required_marker: " *",
+
+            // Admin Dashboard
+            admin_title: "แผงควบคุมผู้ดูแล",
+            admin_total_users: "สมาชิกทั้งหมด",
+            admin_total_responses: "การตอบรับทั้งหมด",
+            admin_verified_users: "ยืนยันแล้ว",
+            admin_pending_users: "รอตรวจสอบ",
+            admin_col_nickname: "ชื่อเล่น",
+            admin_col_year: "ชั้นปี",
+            admin_col_phone: "เบอร์โทร",
+            admin_col_instagram: "IG",
+            admin_col_line: "Line",
+            admin_col_status: "สถานะ",
+            admin_col_action: "การกระทำ",
+            admin_responses_tab: "การตอบรับ",
+            admin_users_tab: "สมาชิก",
+            admin_toggle_verify: "✓ ยืนยัน",
+            admin_revoke_verify: "✕ เพิกถอน",
+            admin_col_responder: "ผู้ตอบ",
+            admin_col_answers: "คำตอบ",
+            admin_col_submitted_at: "ส่งเมื่อ",
+            admin_delete_response: "🗑 ลบ",
+            admin_nav_button: "🔧 แอดมิน",
+            admin_back_to_event: "← กลับไปกิจกรรม",
+            admin_no_responses: "ยังไม่มีการตอบรับ",
+            admin_no_users: "ยังไม่มีสมาชิก",
         },
 
         // ──────────────────────────────────────────────────────────────────
@@ -295,12 +371,12 @@ pub fn get_locale(lang: Language) -> Locale {
             app_name: "4ever & Beyond",
             tagline: "Gather. Connect. Feast!",
             connecting: "Connecting...",
-            footer_text: "Built with Rust · SpacetimeDB · Dioxus",
+            footer_text: "Built with Rust · PostgreSQL · Dioxus",
             data_safe: "Your data is safe — guaranteed by P'Ozone",
 
             // Loading View
             loading_title: "Connecting to the community...",
-            loading_subtitle: "Verifying your identity with SpacetimeDB",
+            loading_subtitle: "Loading data...",
 
             // Onboarding
             onboard_title: "Sign Up to Join",
@@ -365,6 +441,32 @@ pub fn get_locale(lang: Language) -> Locale {
 
             // Required Marker
             required_marker: " *",
+
+            // Admin Dashboard
+            admin_title: "Admin Dashboard",
+            admin_total_users: "Total Users",
+            admin_total_responses: "Total Responses",
+            admin_verified_users: "Verified",
+            admin_pending_users: "Pending",
+            admin_col_nickname: "Nickname",
+            admin_col_year: "Year",
+            admin_col_phone: "Phone",
+            admin_col_instagram: "IG",
+            admin_col_line: "Line",
+            admin_col_status: "Status",
+            admin_col_action: "Action",
+            admin_responses_tab: "Responses",
+            admin_users_tab: "Users",
+            admin_toggle_verify: "✓ Verify",
+            admin_revoke_verify: "✕ Revoke",
+            admin_col_responder: "Responder",
+            admin_col_answers: "Answers",
+            admin_col_submitted_at: "Submitted",
+            admin_delete_response: "🗑 Delete",
+            admin_nav_button: "🔧 Admin",
+            admin_back_to_event: "← Back to Event",
+            admin_no_responses: "No responses yet",
+            admin_no_users: "No users yet",
         },
     }
 }
