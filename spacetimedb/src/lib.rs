@@ -20,10 +20,12 @@ pub struct UserProfile {
     pub nickname: String,
     /// Academic year or "Alumni" (required)
     pub entry_year: String,
-    /// Line ID or Instagram handle (required)
-    pub contact_channel: String,
-    /// Optional — prevents Alumni drop-off
-    pub student_id: Option<String>,
+    /// Phone number (required)
+    pub phone: String,
+    /// Instagram handle (required)
+    pub instagram: String,
+    /// Line ID (required)
+    pub line_id: String,
     /// Admin can toggle this post-registration
     pub is_verified: bool,
     pub created_at: spacetimedb::Timestamp,
@@ -88,12 +90,12 @@ pub fn init(ctx: &spacetimedb::ReducerContext) {
     // Seed a default active event
     ctx.db.event().insert(Event {
         id: 0,
-        title: "Welcome Dinner 2025".to_string(),
-        description: "Join us for the annual welcome dinner! Please select your menu preference and let us know about dietary restrictions.".to_string(),
-        event_date: "2025-06-15".to_string(),
+        title: "4EVER รวมตัวกินสเต็กเด็กอ้วน".to_string(),
+        description: "รวมตัวกินสเต็กเด็กอ้วน ศาลายา ซอย 11\n\n🚗 มีที่จอดรถ ร้านอยู่ท้ายซอย\n📍 https://linktr.ee/steakdekuanwattana\n\nข้อมูลปลอดภัยแน่นอนจ้ะ พี่โอโซนรับประกัน".to_string(),
+        event_date: "08-04-2569".to_string(),
         priority: 10,
         is_active: true,
-        passcode: "4ever2025".to_string(),
+        passcode: "4ever2026".to_string(),
         created_at: ctx.timestamp,
     });
 
@@ -101,49 +103,40 @@ pub fn init(ctx: &spacetimedb::ReducerContext) {
     ctx.db.event_question().insert(EventQuestion {
         id: 0,
         event_id: 1,
-        label: "Menu Selection".to_string(),
+        label: "เห็นข่าวการเรียกรวมตัวจากที่ไหนเอ่ย".to_string(),
         field_type: "select".to_string(),
-        options: Some(r#"["Standard","Vegetarian","Halal","Vegan"]"#.to_string()),
+        options: Some(r#"["กลุ่มไลน์","อินสตาแกรม","เพื่อนบอก","Facebook","อื่นๆ"]"#.to_string()),
         is_required: true,
     });
 
     ctx.db.event_question().insert(EventQuestion {
         id: 0,
         event_id: 1,
-        label: "Any dietary restrictions or allergies?".to_string(),
-        field_type: "text".to_string(),
-        options: None,
-        is_required: false,
-    });
-
-    ctx.db.event_question().insert(EventQuestion {
-        id: 0,
-        event_id: 1,
-        label: "Will you bring a plus-one?".to_string(),
-        field_type: "radio".to_string(),
-        options: Some(r#"["Yes","No"]"#.to_string()),
+        label: "เมนูที่จะกินค่าาา".to_string(),
+        field_type: "select".to_string(),
+        options: Some(r#"["สเต็กหมู ขนาด S","สเต็กหมู ขนาด M","สเต็กหมู ขนาด L","สเต็กไก่ ขนาด S","สเต็กไก่ ขนาด M","สเต็กไก่ ขนาด L","สเต็กปลาแซลมอน","เมนูอื่นๆ (ระบุในช่องอื่น)"]"#.to_string()),
         is_required: true,
     });
 
-    log::info!("Default event 'Welcome Dinner 2025' seeded with 3 questions.");
+    log::info!("Default event '4EVER รวมตัวกินสเต็กเด็กอ้วน' seeded with 2 questions.");
 }
 
 // =============================================================================
 // REDUCERS — USER FLOWS
 // =============================================================================
 
-/// **Fast Onboarding**: Registers a minimal user profile.
+/// **Fast Onboarding**: Registers a user profile.
 ///
-/// Only requires `nickname`, `entry_year`, and `contact_channel`.
-/// `student_id` is optional to reduce friction (especially for Alumni).
+/// All 5 fields are required: `nickname`, `entry_year`, `phone`, `instagram`, `line_id`.
 /// The profile is created with `is_verified: false` — admin toggles later.
 #[spacetimedb::reducer]
 pub fn register_profile(
     ctx: &spacetimedb::ReducerContext,
     nickname: String,
     entry_year: String,
-    contact_channel: String,
-    student_id: Option<String>,
+    phone: String,
+    instagram: String,
+    line_id: String,
 ) {
     let identity = ctx.sender();
     let table = ctx.db.user_profile();
@@ -157,7 +150,7 @@ pub fn register_profile(
         return;
     }
 
-    // Validate required fields
+    // Validate required fields (all 5 are mandatory)
     if nickname.trim().is_empty() {
         log::error!(
             "[register_profile] Rejected: nickname is empty (caller: {:?}).",
@@ -172,9 +165,23 @@ pub fn register_profile(
         );
         return;
     }
-    if contact_channel.trim().is_empty() {
+    if phone.trim().is_empty() {
         log::error!(
-            "[register_profile] Rejected: contact_channel is empty (caller: {:?}).",
+            "[register_profile] Rejected: phone is empty (caller: {:?}).",
+            identity
+        );
+        return;
+    }
+    if instagram.trim().is_empty() {
+        log::error!(
+            "[register_profile] Rejected: instagram is empty (caller: {:?}).",
+            identity
+        );
+        return;
+    }
+    if line_id.trim().is_empty() {
+        log::error!(
+            "[register_profile] Rejected: line_id is empty (caller: {:?}).",
             identity
         );
         return;
@@ -184,25 +191,22 @@ pub fn register_profile(
         identity,
         nickname: nickname.trim().to_string(),
         entry_year: entry_year.trim().to_string(),
-        contact_channel: contact_channel.trim().to_string(),
-        student_id: student_id.and_then(|s| {
-            let trimmed = s.trim().to_string();
-            if trimmed.is_empty() {
-                None
-            } else {
-                Some(trimmed)
-            }
-        }),
+        phone: phone.trim().to_string(),
+        instagram: instagram.trim().to_string(),
+        line_id: line_id.trim().to_string(),
         is_verified: false,
         created_at: ctx.timestamp,
     };
 
     table.insert(profile);
     log::info!(
-        "[register_profile] Profile created for {:?} — nickname: '{}', year: '{}'.",
+        "[register_profile] Profile created for {:?} — nickname: '{}', year: '{}', phone: '{}', ig: '{}', line: '{}'.",
         identity,
         nickname.trim(),
-        entry_year.trim()
+        entry_year.trim(),
+        phone.trim(),
+        instagram.trim(),
+        line_id.trim()
     );
 }
 
