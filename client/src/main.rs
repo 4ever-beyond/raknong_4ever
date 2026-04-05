@@ -208,9 +208,7 @@ fn seed_demo_data(mut state: AppState) {
             event_id: 1,
             label: "Menu Selection".to_string(),
             field_type: "select".to_string(),
-            options: Some(
-                r#"["Standard","Vegetarian","Halal","Vegan"]"#.to_string(),
-            ),
+            options: Some(r#"["Standard","Vegetarian","Halal","Vegan"]"#.to_string()),
             is_required: true,
         },
         EventQuestion {
@@ -236,6 +234,7 @@ fn seed_demo_data(mut state: AppState) {
 // VIEW COMPONENTS
 // =============================================================================
 
+#[component]
 fn LoadingView() -> Element {
     rsx! {
         div {
@@ -277,15 +276,21 @@ fn OnboardingView() -> Element {
         let sid = student_id.read().clone();
 
         if nick.trim().is_empty() {
-            state.error_message.set(Some("Nickname is required.".to_string()));
+            state
+                .error_message
+                .set(Some("Nickname is required.".to_string()));
             return;
         }
         if year.trim().is_empty() {
-            state.error_message.set(Some("Please select your Year or Alumni status.".to_string()));
+            state.error_message.set(Some(
+                "Please select your Year or Alumni status.".to_string(),
+            ));
             return;
         }
         if contact.trim().is_empty() {
-            state.error_message.set(Some("Contact channel (Line ID / IG) is required.".to_string()));
+            state.error_message.set(Some(
+                "Contact channel (Line ID / IG) is required.".to_string(),
+            ));
             return;
         }
 
@@ -416,9 +421,8 @@ fn EventView() -> Element {
     let questions = (state.event_questions)();
     let profile = (state.user_profile)();
 
-    let mut answers: Signal<Vec<String>> = use_signal(|| {
-        questions.iter().map(|_| String::new()).collect()
-    });
+    let mut answers: Signal<Vec<String>> =
+        use_signal(|| questions.iter().map(|_| String::new()).collect());
     let mut passcode = use_signal(String::new);
     let mut is_submitting = use_signal(|| false);
     let mut passcode_error = use_signal(|| false);
@@ -429,7 +433,9 @@ fn EventView() -> Element {
         let qs = (state.event_questions)();
 
         if pc.trim().is_empty() {
-            state.error_message.set(Some("Please enter the event passcode.".to_string()));
+            state
+                .error_message
+                .set(Some("Please enter the event passcode.".to_string()));
             passcode_error.set(true);
             return;
         }
@@ -448,7 +454,9 @@ fn EventView() -> Element {
             if q.is_required {
                 if let Some(ans) = current_answers.get(i) {
                     if ans.trim().is_empty() {
-                        state.error_message.set(Some(format!("Please answer: {}", q.label)));
+                        state
+                            .error_message
+                            .set(Some(format!("Please answer: {}", q.label)));
                         return;
                     }
                 }

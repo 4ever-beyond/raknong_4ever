@@ -149,7 +149,7 @@ pub fn register_profile(
     let table = ctx.db.user_profile();
 
     // Guard: Prevent duplicate registration
-    if table.identity().find(&identity).is_some() {
+    if table.identity().find(identity).is_some() {
         log::warn!(
             "[register_profile] User {:?} already has a profile. Skipping.",
             identity
@@ -226,7 +226,7 @@ pub fn submit_response(
     let response_table = ctx.db.event_response();
 
     // Step 1: Verify user has a profile
-    let user = match user_table.identity().find(&identity) {
+    let user = match user_table.identity().find(identity) {
         Some(p) => p,
         None => {
             log::error!(
@@ -238,7 +238,7 @@ pub fn submit_response(
     };
 
     // Step 2: Verify event exists
-    let event = match event_table.id().find(&event_id) {
+    let event = match event_table.id().find(event_id) {
         Some(e) => e,
         None => {
             log::error!(
@@ -327,7 +327,7 @@ pub fn toggle_verification(ctx: &spacetimedb::ReducerContext, target_identity: I
     let table = ctx.db.user_profile();
 
     // TODO: Verify admin_identity has admin privileges before allowing this.
-    match table.identity().find(&target_identity) {
+    match table.identity().find(target_identity) {
         Some(mut profile) => {
             let previous = profile.is_verified;
             profile.is_verified = !previous;
@@ -422,7 +422,7 @@ pub fn add_event_question(
     }
 
     // Verify the event exists
-    if ctx.db.event().id().find(&event_id).is_none() {
+    if ctx.db.event().id().find(event_id).is_none() {
         log::error!(
             "[add_event_question] Rejected: Event id={} not found.",
             event_id
@@ -452,7 +452,7 @@ pub fn add_event_question(
 /// Deactivate an event (soft delete).
 #[spacetimedb::reducer]
 pub fn deactivate_event(ctx: &spacetimedb::ReducerContext, event_id: u64) {
-    match ctx.db.event().id().find(&event_id) {
+    match ctx.db.event().id().find(event_id) {
         Some(mut event) => {
             event.is_active = false;
             let title = event.title.clone();
@@ -477,7 +477,7 @@ pub fn deactivate_event(ctx: &spacetimedb::ReducerContext, event_id: u64) {
 pub fn delete_event_response(ctx: &spacetimedb::ReducerContext, response_id: u64) {
     let table = ctx.db.event_response();
 
-    match table.id().find(&response_id) {
+    match table.id().find(response_id) {
         Some(response) => {
             table.id().delete(response_id);
             log::info!(
