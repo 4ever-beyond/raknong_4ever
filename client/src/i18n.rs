@@ -18,14 +18,6 @@ pub enum Language {
 }
 
 impl Language {
-    /// Human-readable label for this language (shown in the language toggle).
-    pub fn label(&self) -> &'static str {
-        match self {
-            Language::Thai => "ภาษาไทย",
-            Language::English => "English",
-        }
-    }
-
     /// Returns the opposite language, used by the language toggle button.
     pub fn toggle(&self) -> Self {
         match self {
@@ -232,6 +224,18 @@ pub struct Locale {
     pub admin_no_responses: &'static str,
     /// No users yet
     pub admin_no_users: &'static str,
+
+    // ── Admin Authentication ───────────────────────────────────────────
+    /// Admin auth dialog title
+    pub admin_auth_title: &'static str,
+    /// Admin passcode label
+    pub admin_auth_passcode_label: &'static str,
+    /// Admin passcode placeholder
+    pub admin_auth_passcode_placeholder: &'static str,
+    /// Admin auth submit button
+    pub admin_auth_submit: &'static str,
+    /// Admin auth error message
+    pub admin_auth_error: &'static str,
 }
 
 impl Locale {
@@ -361,6 +365,13 @@ pub fn get_locale(lang: Language) -> Locale {
             admin_back_to_event: "← กลับไปกิจกรรม",
             admin_no_responses: "ยังไม่มีการตอบรับ",
             admin_no_users: "ยังไม่มีสมาชิก",
+
+            // Admin Authentication
+            admin_auth_title: "เข้าถึงแผงควบคุม",
+            admin_auth_passcode_label: "ใส่รหัสผ่านแอดมิน",
+            admin_auth_passcode_placeholder: "รหัสผ่านแอดมิน",
+            admin_auth_submit: "เข้าสู่ระบบ",
+            admin_auth_error: "รหัสผ่านแอดมินไม่ถูกต้อง",
         },
 
         // ──────────────────────────────────────────────────────────────────
@@ -467,6 +478,13 @@ pub fn get_locale(lang: Language) -> Locale {
             admin_back_to_event: "← Back to Event",
             admin_no_responses: "No responses yet",
             admin_no_users: "No users yet",
+
+            // Admin Authentication
+            admin_auth_title: "Admin Access",
+            admin_auth_passcode_label: "Enter admin passcode",
+            admin_auth_passcode_placeholder: "Admin passcode",
+            admin_auth_submit: "Enter",
+            admin_auth_error: "Invalid admin passcode",
         },
     }
 }
