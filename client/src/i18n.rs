@@ -1,5 +1,16 @@
-use dioxus::prelude::*;
+//! Internationalization (i18n) module for the 4ever & Beyond community platform.
+//!
+//! Provides a complete set of localized UI strings for Thai and English.
+//! All translatable text is centralized here so that views remain locale-agnostic.
 
+// ─── Imports ──────────────────────────────────────────────────────────────────
+
+// ─── Language ─────────────────────────────────────────────────────────────────
+
+/// Supported languages for the application.
+///
+/// Derives `Clone`, `Copy`, and `PartialEq` so it can be stored efficiently in
+/// Dioxus signals and compared in `match` / `if` expressions.
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub enum Language {
     Thai,
@@ -7,6 +18,7 @@ pub enum Language {
 }
 
 impl Language {
+    /// Human-readable label for this language (shown in the language toggle).
     pub fn label(&self) -> &'static str {
         match self {
             Language::Thai => "ภาษาไทย",
@@ -14,6 +26,7 @@ impl Language {
         }
     }
 
+    /// Returns the opposite language, used by the language toggle button.
     pub fn toggle(&self) -> Self {
         match self {
             Language::Thai => Language::English,
@@ -22,94 +35,219 @@ impl Language {
     }
 }
 
+// ─── Locale ───────────────────────────────────────────────────────────────────
+
+/// A bundle of every translatable string in the application.
+///
+/// All fields are `&'static str` so the struct is `Copy`-friendly and never
+/// allocates at runtime. Construct an instance via [`get_locale`].
+///
+/// # Sections
+///
+/// | Section              | Prefix / Group        |
+/// |----------------------|-----------------------|
+/// | Branding             | `app_name`, `tagline` |
+/// | Loading view         | `loading_*`           |
+/// | Onboarding form      | `onboard_*`, `*_label` / `*_placeholder` |
+/// | Onboarding errors    | `err_*`               |
+/// | Event view           | `welcome_back`, `rsvp_*`, etc. |
+/// | No-events fallback   | `no_events_*`         |
+/// | Passcode errors      | `err_passcode_*`      |
+/// | Submitted / success  | `submitted_*`         |
+/// | Form utilities       | `optional_label`, etc. |
 #[derive(Clone, Debug)]
 pub struct Locale {
-    // App
+    // ── Branding ──────────────────────────────────────────────────────────
+    /// Application display name.
     pub app_name: &'static str,
+    /// Short marketing tagline beneath the app name.
+    pub tagline: &'static str,
+    /// Connecting / loading indicator text.
     pub connecting: &'static str,
+    /// Footer credits line.
     pub footer_text: &'static str,
+    /// Data-safety reassurance message.
+    pub data_safe: &'static str,
 
-    // Loading
+    // ── Loading View ──────────────────────────────────────────────────────
+    /// Primary loading message.
     pub loading_title: &'static str,
+    /// Secondary loading message (identity verification).
     pub loading_subtitle: &'static str,
 
-    // Onboarding
+    // ── Onboarding ────────────────────────────────────────────────────────
+    /// Onboarding card heading.
     pub onboard_title: &'static str,
+    /// Onboarding card subtitle / helper text.
     pub onboard_subtitle: &'static str,
+    /// Label for the nickname / name field.
     pub nickname_label: &'static str,
+    /// Placeholder inside the nickname input.
     pub nickname_placeholder: &'static str,
+    /// Label for the academic-year selector.
     pub year_label: &'static str,
+    /// Placeholder inside the year selector.
     pub year_placeholder: &'static str,
-    pub student_id_label: &'static str,
-    pub student_id_hint: &'static str,
-    pub student_id_placeholder: &'static str,
+    /// Label for the phone-number field.
+    pub phone_label: &'static str,
+    /// Placeholder inside the phone input.
+    pub phone_placeholder: &'static str,
+    /// Label for the Instagram handle field.
+    pub instagram_label: &'static str,
+    /// Placeholder inside the Instagram input.
+    pub instagram_placeholder: &'static str,
+    /// Label for the Line ID field.
+    pub line_label: &'static str,
+    /// Placeholder inside the Line ID input.
+    pub line_placeholder: &'static str,
+    /// Call-to-action button on the onboarding form.
     pub continue_button: &'static str,
+    /// Loading state while the profile is being created.
     pub creating_profile: &'static str,
 
-    // Errors
+    // ── Onboarding Errors ─────────────────────────────────────────────────
+    /// Error when nickname is empty.
     pub err_nickname_required: &'static str,
+    /// Error when year is not selected.
     pub err_year_required: &'static str,
-    pub err_passcode_required: &'static str,
-    pub err_passcode_invalid: &'static str,
-    pub err_answer_prefix: &'static str,
+    /// Error when phone number is empty.
+    pub err_phone_required: &'static str,
+    /// Error when Instagram handle is empty.
+    pub err_instagram_required: &'static str,
+    /// Error when Line ID is empty.
+    pub err_line_required: &'static str,
 
-    // Event
+    // ── Event View ────────────────────────────────────────────────────────
+    /// Greeting shown to returning users.
     pub welcome_back: &'static str,
+    /// Badge text for an active event.
     pub active_badge: &'static str,
+    /// Heading above RSVP questions.
     pub rsvp_title: &'static str,
+    /// Label for the event passcode field.
     pub passcode_label: &'static str,
+    /// Placeholder inside the passcode input.
     pub passcode_placeholder: &'static str,
+    /// Helper / security hint beneath the passcode field.
     pub passcode_hint: &'static str,
+    /// Submit button for RSVP confirmation.
     pub submit_rsvp: &'static str,
+    /// Loading state while submitting RSVP.
     pub submitting: &'static str,
+    /// Badge for a verified RSVP.
     pub verified: &'static str,
+    /// Badge for a pending RSVP.
     pub pending: &'static str,
+    /// Link / button to view menu and location details.
+    pub view_menu: &'static str,
 
-    // No events
+    // ── No Events ─────────────────────────────────────────────────────────
+    /// Title shown when there are no active events.
     pub no_events_title: &'static str,
+    /// Subtitle / encouragement when there are no events.
     pub no_events_subtitle: &'static str,
 
-    // Submitted
+    // ── Passcode Errors ───────────────────────────────────────────────────
+    /// Error when passcode is empty.
+    pub err_passcode_required: &'static str,
+    /// Error when passcode does not match.
+    pub err_passcode_invalid: &'static str,
+    /// Prefix prepended to a required-question error ("Please answer: ").
+    pub err_answer_prefix: &'static str,
+
+    // ── Submitted / Success ───────────────────────────────────────────────
+    /// Heading after successful RSVP.
     pub submitted_title: &'static str,
+    /// Confirmation message after RSVP.
     pub submitted_subtitle: &'static str,
+    /// Label preceding the event name.
     pub event_label: &'static str,
+    /// Prefix before the user's registered name.
     pub registered_as: &'static str,
+    /// Closing congratulatory message.
     pub see_you: &'static str,
 
-    // Form
+    // ── Form Utilities ────────────────────────────────────────────────────
+    /// Tag appended to optional fields.
     pub optional_label: &'static str,
+    /// Placeholder for generic `<select>` dropdowns.
     pub choose_option: &'static str,
+
+    // ── Language Toggle ───────────────────────────────────────────────────
+    /// Label for the Thai language option.
+    pub lang_toggle_th: &'static str,
+    /// Label for the English language option.
+    pub lang_toggle_en: &'static str,
+
+    // ── Required Marker ───────────────────────────────────────────────────
+    /// Visual marker appended to required-field labels.
+    pub required_marker: &'static str,
 }
 
+impl Locale {
+    /// Returns the list of academic-year options for the onboarding form.
+    ///
+    /// Thai: `["ปี 1", "ปี 2", "ปี 3", "ปี 4", "ปี 5+", "ศิษย์เก่า"]`
+    ///
+    /// English: `["Year 1", "Year 2", "Year 3", "Year 4", "Year 5+", "Alumni"]`
+    pub fn year_options(&self) -> Vec<&'static str> {
+        // The Thai locale carries Thai year labels; otherwise use English.
+        if self.year_placeholder == "เลือกชั้นปี..." {
+            vec!["ปี 1", "ปี 2", "ปี 3", "ปี 4", "ปี 5+", "ศิษย์เก่า"]
+        } else {
+            vec!["Year 1", "Year 2", "Year 3", "Year 4", "Year 5+", "Alumni"]
+        }
+    }
+}
+
+// ─── Locale Factory ───────────────────────────────────────────────────────────
+
+/// Build a [`Locale`] for the given [`Language`].
+///
+/// Every UI string in the application flows through this function, making it
+/// the single source of truth for translations.
 pub fn get_locale(lang: Language) -> Locale {
     match lang {
+        // ──────────────────────────────────────────────────────────────────
+        //  Thai (TH)
+        // ──────────────────────────────────────────────────────────────────
         Language::Thai => Locale {
+            // Branding
             app_name: "4ever & Beyond",
+            tagline: "รวมตัว สังสรรค์ กินสเต็ก!",
             connecting: "กำลังเชื่อมต่อ...",
-            footer_text: "สร้างด้วย Rust · SpacetimeDB · Dioxus 0.7",
+            footer_text: "สร้างด้วย Rust · SpacetimeDB · Dioxus",
+            data_safe: "ข้อมูลปลอดภัยแน่นอนจ้ะ พี่โอโซนรับประกัน",
 
+            // Loading View
             loading_title: "กำลังเชื่อมต่อกับชุมชน...",
             loading_subtitle: "กำลังยืนยันตัวตนกับ SpacetimeDB",
 
-            onboard_title: "ลงทะเบียนด่วน",
-            onboard_subtitle: "ข้อมูลพื้นฐาน — แก้ไขโปรไฟล์ได้ภายหลัง!",
-            nickname_label: "ชื่อเล่น",
-            nickname_placeholder: "เราควรเรียกคุณว่าอะไร?",
-            year_label: "ชั้นปี / ศิษย์เก่า",
+            // Onboarding
+            onboard_title: "ลงทะเบียนเข้าร่วม",
+            onboard_subtitle: "ข้อมูลพื้นฐาน — แก้ไขได้ภายหลัง!",
+            nickname_label: "ชื่อเล่นจ้า",
+            nickname_placeholder: "Four",
+            year_label: "ตอนนี้เรียนปีไหนเอ่ย",
             year_placeholder: "เลือกชั้นปี...",
-            student_id_label: "รหัสนักศึกษา",
-            student_id_hint: "ไม่จำเป็นสำหรับศิษย์เก่า",
-            student_id_placeholder: "เช่น 6610xxxxx",
+            phone_label: "ขอเบอร์หน่อยจ้า",
+            phone_placeholder: "0xx-xxx-xxxx",
+            instagram_label: "ไอจีๆๆ",
+            instagram_placeholder: "@your_ig",
+            line_label: "ไลน์ด้วยเผื่อตามตัว",
+            line_placeholder: "Line ID",
             continue_button: "ดำเนินการต่อ →",
             creating_profile: "กำลังสร้างโปรไฟล์...",
 
-            err_nickname_required: "กรุณาใส่ชื่อเล่น",
-            err_year_required: "กรุณาเลือกชั้นปีหรือสถานะศิษย์เก่า",
-            err_passcode_required: "กรุณาใส่รหัสผ่านกิจกรรม",
-            err_passcode_invalid: "รหัสผ่านไม่ถูกต้อง ตรวจสอบในกลุ่มแชท",
-            err_answer_prefix: "กรุณาตอบ: ",
+            // Onboarding Errors
+            err_nickname_required: "กรุณาใส่ชื่อจ้า",
+            err_year_required: "เลือกชั้นปีด้วยจ้า",
+            err_phone_required: "ขอเบอร์ด้วยน้า",
+            err_instagram_required: "ใส่ไอจีด้วยจ้า",
+            err_line_required: "ใส่ไลน์ไอดีด้วยน้า",
 
-            welcome_back: "ยินดีต้อนรับกลับ,",
+            // Event View
+            welcome_back: "สวัสดีจ้า,",
             active_badge: "● กำลังดำเนินการ",
             rsvp_title: "คำถามลงทะเบียน",
             passcode_label: "รหัสผ่านกิจกรรม",
@@ -119,45 +257,75 @@ pub fn get_locale(lang: Language) -> Locale {
             submitting: "กำลังส่งข้อมูล...",
             verified: "✓ ยืนยันแล้ว",
             pending: "⏳ รอตรวจสอบ",
+            view_menu: "📋 ดูเมนูและแผนที่",
 
+            // No Events
             no_events_title: "ไม่มีกิจกรรมในขณะนี้",
             no_events_subtitle: "กลับมาตรวจสอบอีกครั้ง — มีอะไรดีๆ กำลังจะมา!",
 
+            // Passcode Errors
+            err_passcode_required: "กรุณาใส่รหัสผ่านกิจกรรม",
+            err_passcode_invalid: "รหัสผ่านไม่ถูกต้อง ตรวจสอบในกลุ่มแชท",
+            err_answer_prefix: "กรุณาตอบ: ",
+
+            // Submitted
             submitted_title: "ลงทะเบียนสำเร็จ!",
             submitted_subtitle: "การลงทะเบียนของคุณได้รับการยืนยันแล้ว",
             event_label: "กิจกรรม",
             registered_as: "ลงทะเบียนในชื่อ: ",
             see_you: "แล้วเจอกันใหม่! 🚀",
 
+            // Form
             optional_label: "(ไม่จำเป็น)",
             choose_option: "เลือกตัวเลือก...",
-        },
-        Language::English => Locale {
-            app_name: "4ever & Beyond",
-            connecting: "Connecting...",
-            footer_text: "Built with Rust · SpacetimeDB · Dioxus 0.7",
 
+            // Language Toggle
+            lang_toggle_th: "ภาษาไทย",
+            lang_toggle_en: "English",
+
+            // Required Marker
+            required_marker: " *",
+        },
+
+        // ──────────────────────────────────────────────────────────────────
+        //  English (EN)
+        // ──────────────────────────────────────────────────────────────────
+        Language::English => Locale {
+            // Branding
+            app_name: "4ever & Beyond",
+            tagline: "Gather. Connect. Feast!",
+            connecting: "Connecting...",
+            footer_text: "Built with Rust · SpacetimeDB · Dioxus",
+            data_safe: "Your data is safe — guaranteed by P'Ozone",
+
+            // Loading View
             loading_title: "Connecting to the community...",
             loading_subtitle: "Verifying your identity with SpacetimeDB",
 
-            onboard_title: "Quick Sign-Up",
-            onboard_subtitle: "Just the basics — you can complete your profile later!",
-            nickname_label: "Nickname",
-            nickname_placeholder: "What should we call you?",
-            year_label: "Year / Alumni",
+            // Onboarding
+            onboard_title: "Sign Up to Join",
+            onboard_subtitle: "Just the basics — you can edit later!",
+            nickname_label: "Name (nickname, first name, or full name — anything works!)",
+            nickname_placeholder: "Four",
+            year_label: "What year are you in?",
             year_placeholder: "Select your year...",
-            student_id_label: "Student ID",
-            student_id_hint: "Not required for Alumni",
-            student_id_placeholder: "e.g. 6610xxxxx",
+            phone_label: "Phone number",
+            phone_placeholder: "0xx-xxx-xxxx",
+            instagram_label: "Instagram",
+            instagram_placeholder: "@your_ig",
+            line_label: "Line ID",
+            line_placeholder: "Line ID",
             continue_button: "Continue →",
             creating_profile: "Creating Profile...",
 
-            err_nickname_required: "Nickname is required.",
-            err_year_required: "Please select your Year or Alumni status.",
-            err_passcode_required: "Please enter the event passcode.",
-            err_passcode_invalid: "Invalid passcode. Check the group chat for the correct code.",
-            err_answer_prefix: "Please answer: ",
+            // Onboarding Errors
+            err_nickname_required: "Please enter your name.",
+            err_year_required: "Please select your year.",
+            err_phone_required: "Phone number is required.",
+            err_instagram_required: "Instagram handle is required.",
+            err_line_required: "Line ID is required.",
 
+            // Event View
             welcome_back: "Welcome back,",
             active_badge: "● ACTIVE",
             rsvp_title: "RSVP Questions",
@@ -169,18 +337,34 @@ pub fn get_locale(lang: Language) -> Locale {
             submitting: "Submitting RSVP...",
             verified: "✓ Verified",
             pending: "⏳ Pending",
+            view_menu: "📋 View Menu & Location",
 
+            // No Events
             no_events_title: "No active events right now",
             no_events_subtitle: "Check back soon — something awesome is coming!",
 
+            // Passcode Errors
+            err_passcode_required: "Please enter the event passcode.",
+            err_passcode_invalid: "Invalid passcode. Check the group chat for the correct code.",
+            err_answer_prefix: "Please answer: ",
+
+            // Submitted
             submitted_title: "You're In!",
             submitted_subtitle: "Your RSVP has been confirmed.",
             event_label: "Event",
             registered_as: "Registered as: ",
             see_you: "See you there! 🚀",
 
+            // Form
             optional_label: "(optional)",
             choose_option: "Choose an option...",
+
+            // Language Toggle
+            lang_toggle_th: "ภาษาไทย",
+            lang_toggle_en: "English",
+
+            // Required Marker
+            required_marker: " *",
         },
     }
 }
