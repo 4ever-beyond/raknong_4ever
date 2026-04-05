@@ -1,21 +1,24 @@
 //!
 //! 4ever & Beyond — Community Platform Frontend
 //!
-//! Built with Dioxus 0.7 + Tailwind CSS
-//! Connects to SpacetimeDB backend for persistent state.
+//! Built with Dioxus 0.7 Fullstack + PostgreSQL + Tailwind CSS
 //!
 //! View State Machine:
 //!   Loading → Onboarding → EventView → Submitted
+//!                     ↘ Admin ↗ (toggle from header button)
 //!
 //! i18n: All user-facing strings come from `i18n.rs` via the `Locale` struct.
 //!       Switch languages at runtime with the header toggle.
 
+mod backend;
 mod i18n;
 
+use std::collections::HashMap;
+
 use dioxus::prelude::*;
-use serde::{Deserialize, Serialize};
 
 use crate::i18n::{get_locale, Language};
+use backend::*;
 
 // =============================================================================
 // CONSTANTS
@@ -28,49 +31,8 @@ const INSTAGRAM_URL: &str = "https://www.instagram.com/raknong_4ever";
 const MENU_URL: &str = "https://linktr.ee/steakdekuanwattana";
 
 // =============================================================================
-// MODELS — Mirror the SpacetimeDB tables
+// VIEW STATE
 // =============================================================================
-
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
-pub struct UserProfile {
-    pub identity: String,
-    pub nickname: String,
-    pub entry_year: String,
-    pub phone: String,
-    pub instagram: String,
-    pub line_id: String,
-    pub is_verified: bool,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
-pub struct CommunityEvent {
-    pub id: u64,
-    pub title: String,
-    pub description: String,
-    pub event_date: String,
-    pub priority: u32,
-    pub is_active: bool,
-    pub passcode: String,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
-pub struct EventQuestion {
-    pub id: u64,
-    pub event_id: u64,
-    pub label: String,
-    pub field_type: String,
-    pub options: Option<String>,
-    pub is_required: bool,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
-pub struct EventResponse {
-    pub id: u64,
-    pub event_id: u64,
-    pub user_identity: String,
-    pub answers: String,
-    pub submitted_at: String,
-}
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum ViewState {
@@ -78,18 +40,22 @@ pub enum ViewState {
     Onboarding,
     EventView,
     Submitted,
+    Admin,
 }
 
 /// Shared reactive state passed through Dioxus context.
 #[derive(Clone, Copy)]
 struct AppState {
-    view_state: Signal<ViewState>,
-    user_profile: Signal<Option<UserProfile>>,
-    active_event: Signal<Option<CommunityEvent>>,
-    event_questions: Signal<Vec<EventQuestion>>,
-    error_message: Signal<Option<String>>,
-    is_connecting: Signal<bool>,
-    language: Signal<Language>,
+    view_state: SyncSignal<ViewState>,
+    user_profile: SyncSignal<Option<UserProfile>>,
+    active_event: SyncSignal<Option<EventData>>,
+    event_questions: SyncSignal<Vec<EventQuestion>>,
+    error_message: SyncSignal<Option<String>>,
+    language: SyncSignal<Language>,
+    all_users: SyncSignal<Vec<UserProfile>>,
+    all_responses: SyncSignal<Vec<EventResponse>>,
+    session_id: SyncSignal<String>,
+    data_loaded: SyncSignal<bool>,
 }
 
 // =============================================================================
@@ -97,7 +63,126 @@ struct AppState {
 // =============================================================================
 
 fn main() {
+    #[cfg(not(feature = "server"))]
     dioxus::launch(App);
+
+    #[cfg(feature = "server")]
+    dioxus::serve(|| async move {
+        if let Err(e) = backend::init_db().await {
+            log::error!("Database init error: {e}");
+        }
+        Ok(dioxus::server::router(App))
+    });
+}
+
+// =============================================================================
+// SESSION MANAGEMENT
+// =============================================================================
+
+/// Generate or retrieve a persistent session ID from localStorage.
+/// All ID generation is done in JS to avoid `std::time` (panics in WASM).
+#[allow(dead_code)]
+async fn get_or_create_session_id() -> String {
+    #[cfg(not(feature = "server"))]
+    {
+        // Everything stays in JS — no Rust `SystemTime` / `Instant` usage.
+        let js = r#"
+            (function() {
+                let id = localStorage.getItem('4ever_session_id');
+                if (!id) {
+                    // crypto.randomUUID() is available in all modern browsers
+                    if (typeof crypto !== 'undefined' && crypto.randomUUID) {
+                        id = crypto.randomUUID();
+                    } else {
+                        // Fallback: random hex string via Math.random
+                        id = 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+                            var r = Math.random() * 16 | 0, v = c === 'x' ? r : (r & 0x3 | 0x8);
+                            return v.toString(16);
+                        });
+                    }
+                    localStorage.setItem('4ever_session_id', id);
+                }
+                return id;
+            })()
+        "#;
+
+        match dioxus::document::eval(js).await {
+            Ok(v) => v
+                .as_str()
+                .map(String::from)
+                .unwrap_or_else(|| "session-unknown".into()),
+            Err(_) => "session-unknown".into(),
+        }
+    }
+
+    #[cfg(feature = "server")]
+    {
+        format!("session-server-{}", std::process::id())
+    }
+}
+
+// =============================================================================
+// DATA LOADING HELPERS
+// =============================================================================
+
+/// Load initial data: events + user profile. Sets `data_loaded` when done.
+#[allow(dead_code)]
+async fn load_initial_data(mut state: AppState) {
+    let sid = (state.session_id)();
+
+    // Load active events
+    match get_events().await {
+        Ok(events) => {
+            if let Some(ewq) = events.first() {
+                state.active_event.set(Some(ewq.event.clone()));
+                state.event_questions.set(ewq.questions.clone());
+            }
+        }
+        Err(e) => {
+            log::error!("Failed to load events: {e}");
+            state
+                .error_message
+                .set(Some(format!("Failed to load events: {e}")));
+        }
+    }
+
+    // Load user profile
+    match get_user_profile(sid.clone()).await {
+        Ok(Some(profile)) => {
+            state.user_profile.set(Some(profile));
+            // Check if the user already RSVP'd to the active event
+            if let Some(event) = (state.active_event)() {
+                match check_existing_response(event.id as i64, sid).await {
+                    Ok(true) => state.view_state.set(ViewState::Submitted),
+                    _ => state.view_state.set(ViewState::EventView),
+                }
+            } else {
+                state.view_state.set(ViewState::EventView);
+            }
+        }
+        Ok(None) => {
+            state.view_state.set(ViewState::Onboarding);
+        }
+        Err(e) => {
+            log::error!("Failed to load profile: {e}");
+            state.view_state.set(ViewState::Onboarding);
+        }
+    }
+
+    state.data_loaded.set(true);
+}
+
+/// Refresh admin dashboard data (users + responses).
+async fn load_admin_data(mut state: AppState) -> Result<(), String> {
+    match get_all_users().await {
+        Ok(users) => state.all_users.set(users),
+        Err(e) => return Err(format!("Failed to load users: {e}")),
+    }
+    match get_all_responses().await {
+        Ok(responses) => state.all_responses.set(responses),
+        Err(e) => return Err(format!("Failed to load responses: {e}")),
+    }
+    Ok(())
 }
 
 // =============================================================================
@@ -107,26 +192,44 @@ fn main() {
 #[component]
 fn App() -> Element {
     let mut state = AppState {
-        view_state: use_signal(|| ViewState::Loading),
-        user_profile: use_signal(|| None),
-        active_event: use_signal(|| None),
-        event_questions: use_signal(Vec::new),
-        error_message: use_signal(|| None),
-        is_connecting: use_signal(|| true),
-        language: use_signal(|| Language::Thai),
+        view_state: use_signal_sync(|| ViewState::Loading),
+        user_profile: use_signal_sync(|| None),
+        active_event: use_signal_sync(|| None),
+        event_questions: use_signal_sync(Vec::new),
+        error_message: use_signal_sync(|| None),
+        language: use_signal_sync(|| Language::Thai),
+        all_users: use_signal_sync(Vec::new),
+        all_responses: use_signal_sync(Vec::new),
+        session_id: use_signal_sync(String::new),
+        data_loaded: use_signal_sync(|| false),
     };
 
     use_context_provider(|| state);
 
-    use_future(move || async move {
-        connect_to_spacetimedb(state).await;
+    // ── Initialise session + load data ────────────────────────────────
+    // On the server build the future body is empty so SSR always renders
+    // the Loading view.  On the client the real session ID is obtained and
+    // data is fetched from the backend.
+    use_future(move || {
+        // `mut` needed on web (SyncSignal calls .set()), appears unused on server
+        #[allow(unused_mut, unused_variables)]
+        let mut state = state;
+        async move {
+            #[cfg(not(feature = "server"))]
+            {
+                let sid = get_or_create_session_id().await;
+                state.session_id.set(sid);
+                load_initial_data(state).await;
+            }
+        }
     });
 
     let lang = (state.language)();
     let locale = get_locale(lang);
     let current_state = (state.view_state)();
     let error = (state.error_message)();
-    let connecting = (state.is_connecting)();
+    let is_admin = matches!(current_state, ViewState::Admin);
+    let data_loaded = (state.data_loaded)();
 
     rsx! {
         document::Link { rel: "stylesheet", href: TAILWIND_CSS }
@@ -151,9 +254,30 @@ fn App() -> Element {
                             "{locale.tagline}"
                         }
                     }
-                    // Right side: lang toggle, IG link, status
+                    // Right side: admin, lang toggle, IG link
                     div {
                         class: "flex items-center gap-3",
+
+                        // Admin toggle
+                        button {
+                            class: if is_admin {
+                                "text-xs font-semibold px-2.5 py-1 rounded-full border border-indigo-500/40 bg-indigo-500/20 text-indigo-300 hover:bg-indigo-500/30 transition cursor-pointer"
+                            } else {
+                                "text-xs font-semibold px-2.5 py-1 rounded-full border border-white/15 bg-white/5 hover:bg-white/10 transition text-slate-300 cursor-pointer"
+                            },
+                            onclick: move |_| {
+                                if is_admin {
+                                    state.view_state.set(ViewState::EventView);
+                                } else {
+                                    spawn(async move {
+                                        let _ = load_admin_data(state).await;
+                                    });
+                                    state.view_state.set(ViewState::Admin);
+                                }
+                            },
+                            if is_admin { "← {locale.admin_back_to_event}" } else { "{locale.admin_nav_button}" }
+                        }
+
                         // Language toggle
                         button {
                             class: "text-xs font-semibold px-2.5 py-1 rounded-full border border-white/15 bg-white/5 hover:bg-white/10 transition text-slate-300 cursor-pointer",
@@ -184,13 +308,6 @@ fn App() -> Element {
                                 circle { cx: "17.5", cy: "6.5", r: "1.5", fill: "currentColor", stroke: "none" }
                             }
                         }
-                        // Connecting indicator
-                        if connecting {
-                            span {
-                                class: "text-xs text-indigo-300 animate-pulse font-medium",
-                                "{locale.connecting}"
-                            }
-                        }
                     }
                 }
             }
@@ -203,11 +320,13 @@ fn App() -> Element {
             // ── Main Content ────────────────────────────────────────
             main {
                 class: "flex-1 max-w-4xl w-full mx-auto px-4 py-8",
-                match current_state {
-                    ViewState::Loading => rsx! { LoadingView {} },
-                    ViewState::Onboarding => rsx! { OnboardingView {} },
-                    ViewState::EventView => rsx! { EventView {} },
-                    ViewState::Submitted => rsx! { SubmittedView {} },
+                match (data_loaded, current_state.clone()) {
+                    (false, _) => rsx! { LoadingView {} },
+                    (true, ViewState::Loading) => rsx! { LoadingView {} },
+                    (true, ViewState::Onboarding) => rsx! { OnboardingView {} },
+                    (true, ViewState::EventView) => rsx! { EventView {} },
+                    (true, ViewState::Submitted) => rsx! { SubmittedView {} },
+                    (true, ViewState::Admin) => rsx! { AdminView {} },
                 }
             }
 
@@ -240,72 +359,7 @@ fn App() -> Element {
 }
 
 // =============================================================================
-// SPACETIMEDB CONNECTION (currently demo mode)
-// =============================================================================
-
-async fn connect_to_spacetimedb(mut state: AppState) {
-    // TODO: Replace with real SpacetimeDB SDK WebSocket connection
-    //   let conn = spacetimedb_sdk::connect("ws://localhost:3000", "community-platform", []).await;
-    //   conn.subscribe("SELECT * FROM event WHERE is_active = true");
-    //   conn.subscribe("SELECT * FROM event_question");
-    //   conn.subscribe("SELECT * FROM event_response");
-    seed_demo_data(state);
-
-    state.is_connecting.set(false);
-
-    let has_profile = (state.user_profile)().is_some();
-    state.view_state.set(if has_profile {
-        ViewState::EventView
-    } else {
-        ViewState::Onboarding
-    });
-
-    log::info!("SpacetimeDB connection established (demo mode).");
-}
-
-fn seed_demo_data(mut state: AppState) {
-    state.active_event.set(Some(CommunityEvent {
-        id: 1,
-        title: "4EVER รวมตัวกินสเต็กเด็กอ้วน 🥩".to_string(),
-        description:
-            "รวมตัวกินสเต็กเด็กอ้วน ศาลายา ซอย 11\n\n🚗 มีที่จอดรถ ร้านอยู่ท้ายซอย\n\n{locale.data_safe}"
-                .replace(
-                    "{locale.data_safe}",
-                    get_locale((state.language)()).data_safe,
-                ),
-        event_date: "08-04-2569".to_string(),
-        priority: 10,
-        is_active: true,
-        passcode: "4ever2026".to_string(),
-    }));
-
-    state.event_questions.set(vec![
-        EventQuestion {
-            id: 1,
-            event_id: 1,
-            label: "เห็นข่าวการเรียกรวมตัวจากที่ไหนเอ่ย".to_string(),
-            field_type: "select".to_string(),
-            options: Some(
-                r#"["กลุ่มไลน์","อินสตาแกรม","เพื่อนบอก","Facebook","อื่นๆ"]"#.to_string(),
-            ),
-            is_required: true,
-        },
-        EventQuestion {
-            id: 2,
-            event_id: 1,
-            label: "เมนูที่จะกินค่าาา".to_string(),
-            field_type: "select".to_string(),
-            options: Some(
-                r#"["สเต็กหมู S","สเต็กหมู M","สเต็กหมู L","สเต็กไก่ S","สเต็กไก่ M","สเต็กไก่ L","สเต็กปลาแซลมอน","เมนูอื่นๆ"]"#
-                    .to_string(),
-            ),
-            is_required: true,
-        },
-    ]);
-}
-
-// =============================================================================
-// VIEW COMPONENTS
+// LOADING VIEW
 // =============================================================================
 
 #[component]
@@ -398,24 +452,34 @@ fn OnboardingView() -> Element {
 
         is_submitting.set(true);
 
-        // TODO: In production call SpacetimeDB reducer:
-        //   conn.call_reducer("register_profile", &[&nick, &year, &ph, &ig, &line]);
-        spawn(async move {
-            let profile = UserProfile {
-                identity: "demo_identity_001".to_string(),
-                nickname: nick.trim().to_string(),
-                entry_year: year.trim().to_string(),
-                phone: ph.trim().to_string(),
-                instagram: ig.trim().to_string(),
-                line_id: line.trim().to_string(),
-                is_verified: false,
-            };
+        // Capture for async block
+        let mut state = state;
+        let mut is_submitting = is_submitting;
+        let sid = (state.session_id)();
+        let nick = nick.trim().to_string();
+        let year = year.trim().to_string();
+        let ph = ph.trim().to_string();
+        let ig = ig.trim().to_string();
+        let line = line.trim().to_string();
 
-            let nick_for_log = profile.nickname.clone();
-            state.user_profile.set(Some(profile));
+        spawn(async move {
+            match register_profile(sid, nick, year, ph, ig, line).await {
+                Ok(_) => {
+                    log::info!("register_profile succeeded.");
+                    // Reload profile from server
+                    let sid = (state.session_id)();
+                    if let Ok(Some(profile)) = get_user_profile(sid).await {
+                        state.user_profile.set(Some(profile));
+                    }
+                    state.view_state.set(ViewState::EventView);
+                }
+                Err(e) => {
+                    state
+                        .error_message
+                        .set(Some(format!("Registration failed: {e}")));
+                }
+            }
             is_submitting.set(false);
-            state.view_state.set(ViewState::EventView);
-            log::info!("Profile registered: {:?}", nick_for_log);
         });
     };
 
@@ -442,7 +506,7 @@ fn OnboardingView() -> Element {
                     div {
                         class: "space-y-5",
 
-                        // 1. Nickname / Name
+                        // 1. Nickname
                         FormField {
                             label: locale.nickname_label.to_string(),
                             required: true,
@@ -452,7 +516,7 @@ fn OnboardingView() -> Element {
                             on_change: move |v| nickname.set(v),
                         }
 
-                        // 2. Year / Alumni (select)
+                        // 2. Year (select)
                         div {
                             class: "space-y-1.5",
                             label {
@@ -501,7 +565,7 @@ fn OnboardingView() -> Element {
                             on_change: move |v| line_id.set(v),
                         }
 
-                        // Submit button
+                        // Submit
                         button {
                             class: if is_submitting() {
                                 "w-full bg-indigo-500/40 text-indigo-200 font-semibold py-3.5 rounded-xl cursor-not-allowed transition"
@@ -514,7 +578,6 @@ fn OnboardingView() -> Element {
                         }
                     }
 
-                    // Safety note
                     p {
                         class: "text-center text-xs text-slate-600 mt-5 leading-relaxed",
                         "🔒 {locale.data_safe}"
@@ -558,16 +621,7 @@ fn EventView() -> Element {
             return;
         }
 
-        if let Some(ref evt) = (state.active_event)() {
-            if pc.trim() != evt.passcode.trim() {
-                state
-                    .error_message
-                    .set(Some(loc.err_passcode_invalid.to_string()));
-                passcode_error.set(true);
-                return;
-            }
-        }
-
+        // Validate required answers
         for (i, q) in qs.iter().enumerate() {
             if q.is_required {
                 if let Some(ans) = current_answers.get(i) {
@@ -584,12 +638,36 @@ fn EventView() -> Element {
         passcode_error.set(false);
         is_submitting.set(true);
 
-        // TODO: In production call SpacetimeDB reducer:
-        //   conn.call_reducer("submit_response", &[&event_id, &pc, &answers_json]);
+        // Build answers JSON: { "question_id": "answer" }
+        let answers_map: HashMap<String, String> = qs
+            .iter()
+            .enumerate()
+            .filter_map(|(i, q)| {
+                current_answers
+                    .get(i)
+                    .map(|a| (q.id.to_string(), a.clone()))
+            })
+            .collect();
+        let answers_json = serde_json::to_string(&answers_map).unwrap_or_default();
+
+        // Get event ID
+        let event_id = (state.active_event)().map_or(0, |e| e.id as i64);
+        let sid = (state.session_id)();
+
+        let mut state = state;
+        let mut is_submitting = is_submitting;
+
         spawn(async move {
+            match submit_response(event_id, pc.trim().to_string(), sid, answers_json).await {
+                Ok(()) => {
+                    log::info!("submit_response succeeded.");
+                    state.view_state.set(ViewState::Submitted);
+                }
+                Err(e) => {
+                    state.error_message.set(Some(format!("RSVP failed: {e}")));
+                }
+            }
             is_submitting.set(false);
-            state.view_state.set(ViewState::Submitted);
-            log::info!("RSVP submitted successfully.");
         });
     };
 
@@ -669,7 +747,6 @@ fn EventView() -> Element {
                     }
                     div {
                         class: "mt-4 flex items-center justify-between flex-wrap gap-3",
-                        // Date
                         div {
                             class: "flex items-center gap-2 text-sm text-slate-500",
                             svg {
@@ -686,7 +763,6 @@ fn EventView() -> Element {
                             }
                             "{event_data.event_date}"
                         }
-                        // Menu & Location link
                         a {
                             href: MENU_URL,
                             target: "_blank",
@@ -877,7 +953,6 @@ fn EventView() -> Element {
                         if is_submitting() { "{locale.submitting}" } else { "{locale.submit_rsvp}" }
                     }
 
-                    // Safety reassurance
                     p {
                         class: "text-center text-xs text-slate-600 leading-relaxed",
                         "🔒 {locale.data_safe}"
@@ -942,7 +1017,6 @@ fn SubmittedView() -> Element {
                             "{e.event_date}"
                         }
 
-                        // Menu link
                         a {
                             href: MENU_URL,
                             target: "_blank",
@@ -969,6 +1043,285 @@ fn SubmittedView() -> Element {
             }
         }
     }
+}
+
+// =============================================================================
+// ADMIN DASHBOARD VIEW
+// =============================================================================
+
+#[component]
+fn AdminView() -> Element {
+    let state: AppState = use_context();
+    let locale = get_locale((state.language)());
+    let users = (state.all_users)();
+    let responses = (state.all_responses)();
+    let questions = (state.event_questions)();
+
+    let mut show_users_tab = use_signal(|| true);
+
+    let total_users = users.len();
+    let total_responses = responses.len();
+    let verified_count = users.iter().filter(|u| u.is_verified).count();
+    let pending_count = total_users.saturating_sub(verified_count);
+
+    rsx! {
+        div {
+            class: "space-y-6",
+
+            // ── Title ───────────────────────────────────────────────
+            div {
+                class: "flex items-center justify-between",
+                h2 {
+                    class: "text-2xl font-bold text-white flex items-center gap-3",
+                    span { "🛡" }
+                    "{locale.admin_title}"
+                }
+            }
+
+            // ── Stats Grid ──────────────────────────────────────────
+            div {
+                class: "grid grid-cols-2 md:grid-cols-4 gap-4",
+
+                // Total Users
+                div {
+                    class: "bg-white/[0.04] backdrop-blur-xl border border-white/10 rounded-2xl p-5",
+                    p { class: "text-xs text-slate-500 uppercase tracking-wider font-medium", "{locale.admin_total_users}" }
+                    p { class: "text-3xl font-bold text-white mt-1", "{total_users}" }
+                }
+
+                // Total Responses
+                div {
+                    class: "bg-white/[0.04] backdrop-blur-xl border border-white/10 rounded-2xl p-5",
+                    p { class: "text-xs text-slate-500 uppercase tracking-wider font-medium", "{locale.admin_total_responses}" }
+                    p { class: "text-3xl font-bold text-white mt-1", "{total_responses}" }
+                }
+
+                // Verified
+                div {
+                    class: "bg-white/[0.04] backdrop-blur-xl border border-emerald-500/20 rounded-2xl p-5",
+                    p { class: "text-xs text-emerald-400 uppercase tracking-wider font-medium", "{locale.admin_verified_users}" }
+                    p { class: "text-3xl font-bold text-emerald-300 mt-1", "{verified_count}" }
+                }
+
+                // Pending
+                div {
+                    class: "bg-white/[0.04] backdrop-blur-xl border border-amber-500/20 rounded-2xl p-5",
+                    p { class: "text-xs text-amber-400 uppercase tracking-wider font-medium", "{locale.admin_pending_users}" }
+                    p { class: "text-3xl font-bold text-amber-300 mt-1", "{pending_count}" }
+                }
+            }
+
+            // ── Tab Bar ─────────────────────────────────────────────
+            div {
+                class: "flex gap-2",
+                button {
+                    class: if show_users_tab() {
+                        "px-4 py-2 rounded-xl font-medium bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 cursor-pointer transition"
+                    } else {
+                        "px-4 py-2 rounded-xl font-medium bg-white/5 text-slate-400 border border-white/10 hover:bg-white/10 cursor-pointer transition"
+                    },
+                    onclick: move |_| show_users_tab.set(true),
+                    "{locale.admin_users_tab} ({total_users})"
+                }
+                button {
+                    class: if !show_users_tab() {
+                        "px-4 py-2 rounded-xl font-medium bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 cursor-pointer transition"
+                    } else {
+                        "px-4 py-2 rounded-xl font-medium bg-white/5 text-slate-400 border border-white/10 hover:bg-white/10 cursor-pointer transition"
+                    },
+                    onclick: move |_| show_users_tab.set(false),
+                    "{locale.admin_responses_tab} ({total_responses})"
+                }
+            }
+
+            // ── Tab Content ─────────────────────────────────────────
+            if show_users_tab() {
+                // Users Tab
+                if users.is_empty() {
+                    div {
+                        class: "text-center py-16 text-slate-500",
+                        p { "{locale.admin_no_users}" }
+                    }
+                } else {
+                    div {
+                        class: "bg-white/[0.03] border border-white/10 rounded-xl overflow-hidden",
+                        div {
+                            class: "overflow-x-auto",
+                            table {
+                                class: "w-full text-sm text-left",
+                                thead {
+                                    tr {
+                                        class: "bg-white/[0.04] border-b border-white/10",
+                                        th { class: "px-4 py-3 text-slate-400 font-medium", "#" }
+                                        th { class: "px-4 py-3 text-slate-400 font-medium", "{locale.admin_col_nickname}" }
+                                        th { class: "px-4 py-3 text-slate-400 font-medium", "{locale.admin_col_year}" }
+                                        th { class: "px-4 py-3 text-slate-400 font-medium hidden md:table-cell", "{locale.admin_col_phone}" }
+                                        th { class: "px-4 py-3 text-slate-400 font-medium hidden md:table-cell", "{locale.admin_col_instagram}" }
+                                        th { class: "px-4 py-3 text-slate-400 font-medium hidden lg:table-cell", "{locale.admin_col_line}" }
+                                        th { class: "px-4 py-3 text-slate-400 font-medium", "{locale.admin_col_status}" }
+                                        th { class: "px-4 py-3 text-slate-400 font-medium", "{locale.admin_col_action}" }
+                                    }
+                                }
+                                tbody {
+                                    {users.iter().enumerate().map(|(i, user)| {
+                                        let user_sid = user.session_id.clone();
+                                        let is_verified = user.is_verified;
+                                        let nickname = user.nickname.clone();
+                                        let state = state;
+
+                                        rsx! {
+                                            tr {
+                                                key: "user_{i}",
+                                                class: "border-b border-white/5 hover:bg-white/[0.02] transition",
+                                                td { class: "px-4 py-3 text-slate-500", "{i + 1}" }
+                                                td { class: "px-4 py-3 text-white font-medium", "{user.nickname}" }
+                                                td { class: "px-4 py-3 text-slate-300", "{user.entry_year}" }
+                                                td { class: "px-4 py-3 text-slate-400 hidden md:table-cell", "{user.phone}" }
+                                                td { class: "px-4 py-3 text-slate-400 hidden md:table-cell", "{user.instagram}" }
+                                                td { class: "px-4 py-3 text-slate-400 hidden lg:table-cell", "{user.line_id}" }
+                                                td {
+                                                    class: "px-4 py-3",
+                                                    if is_verified {
+                                                        span {
+                                                            class: "text-xs bg-emerald-500/15 text-emerald-400 px-2.5 py-1 rounded-full font-medium",
+                                                            "{locale.verified}"
+                                                        }
+                                                    } else {
+                                                        span {
+                                                            class: "text-xs bg-amber-500/15 text-amber-400 px-2.5 py-1 rounded-full font-medium",
+                                                            "{locale.pending}"
+                                                        }
+                                                    }
+                                                }
+                                                td {
+                                                    class: "px-4 py-3",
+                                                    button {
+                                                        class: if is_verified {
+                                                            "text-xs px-3 py-1.5 rounded-lg bg-red-500/15 text-red-400 hover:bg-red-500/25 border border-red-500/20 cursor-pointer transition font-medium"
+                                                        } else {
+                                                            "text-xs px-3 py-1.5 rounded-lg bg-emerald-500/15 text-emerald-400 hover:bg-emerald-500/25 border border-emerald-500/20 cursor-pointer transition font-medium"
+                                                        },
+                                                        onclick: move |_| {
+                                                            let sid = user_sid.clone();
+                                                            let nick_log = nickname.clone();
+                                                            let state = state;
+                                                            spawn(async move {
+                                                                let _ = toggle_verification(sid).await;
+                                                                log::info!("toggle_verification called for {nick_log}");
+                                                                let _ = load_admin_data(state).await;
+                                                            });
+                                                        },
+                                                        if is_verified { "{locale.admin_revoke_verify}" } else { "{locale.admin_toggle_verify}" }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    })}
+                                }
+                            }
+                        }
+                    }
+                }
+            } else {
+                // Responses Tab
+                if responses.is_empty() {
+                    div {
+                        class: "text-center py-16 text-slate-500",
+                        p { "{locale.admin_no_responses}" }
+                    }
+                } else {
+                    div {
+                        class: "bg-white/[0.03] border border-white/10 rounded-xl overflow-hidden",
+                        div {
+                            class: "overflow-x-auto",
+                            table {
+                                class: "w-full text-sm text-left",
+                                thead {
+                                    tr {
+                                        class: "bg-white/[0.04] border-b border-white/10",
+                                        th { class: "px-4 py-3 text-slate-400 font-medium", "#" }
+                                        th { class: "px-4 py-3 text-slate-400 font-medium", "{locale.admin_col_responder}" }
+                                        th { class: "px-4 py-3 text-slate-400 font-medium", "{locale.admin_col_answers}" }
+                                        th { class: "px-4 py-3 text-slate-400 font-medium hidden md:table-cell", "{locale.admin_col_submitted_at}" }
+                                        th { class: "px-4 py-3 text-slate-400 font-medium", "{locale.admin_col_action}" }
+                                    }
+                                }
+                                tbody {
+                                    {responses.iter().enumerate().map(|(i, resp)| {
+                                        // Look up responder nickname
+                                        let responder_name = users.iter()
+                                            .find(|u| u.session_id == resp.session_id)
+                                            .map(|u| u.nickname.clone())
+                                            .unwrap_or_else(|| "Unknown".to_string());
+
+                                        // Format answers
+                                        let formatted_answers = format_answers(&resp.answers, &questions);
+                                        let response_id = resp.id;
+                                        let display_time = resp.submitted_at.clone();
+                                        let state = state;
+
+                                        rsx! {
+                                            tr {
+                                                key: "resp_{i}",
+                                                class: "border-b border-white/5 hover:bg-white/[0.02] transition",
+                                                td { class: "px-4 py-3 text-slate-500", "{i + 1}" }
+                                                td { class: "px-4 py-3 text-white font-medium", "{responder_name}" }
+                                                td {
+                                                    class: "px-4 py-3 text-slate-300 max-w-xs",
+                                                    div {
+                                                        class: "text-xs leading-relaxed whitespace-pre-line",
+                                                        "{formatted_answers}"
+                                                    }
+                                                }
+                                                td { class: "px-4 py-3 text-slate-500 text-xs hidden md:table-cell", "{display_time}" }
+                                                td {
+                                                    class: "px-4 py-3",
+                                                    button {
+                                                        class: "text-xs px-3 py-1.5 rounded-lg bg-red-500/15 text-red-400 hover:bg-red-500/25 border border-red-500/20 cursor-pointer transition font-medium",
+                                                        onclick: move |_| {
+                                                            let state = state;
+                                                            spawn(async move {
+                                                                let _ = delete_event_response(response_id as i64).await;
+                                                                log::info!("delete_event_response called for id={response_id}");
+                                                                let _ = load_admin_data(state).await;
+                                                            });
+                                                        },
+                                                        "{locale.admin_delete_response}"
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    })}
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+// =============================================================================
+// HELPER: Format answers JSON into readable text
+// =============================================================================
+
+fn format_answers(answers_json: &str, questions: &[EventQuestion]) -> String {
+    let parsed: HashMap<String, String> = serde_json::from_str(answers_json).unwrap_or_default();
+
+    if parsed.is_empty() {
+        return answers_json.to_string();
+    }
+
+    questions
+        .iter()
+        .filter_map(|q| {
+            parsed
+                .get(&q.id.to_string())
+                .map(|answer| format!("{}: {}", q.label, answer))
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 // =============================================================================
