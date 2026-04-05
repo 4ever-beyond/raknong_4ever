@@ -138,7 +138,7 @@ spacetime publish community-platform -y -s http://localhost:3000
 ```
 
 The `init` reducer automatically seeds:
-- **Event:** "Welcome Dinner 2025" (passcode: `4ever2025`)
+- **Event:** "4EVER รวมตัวกินสเต็กเด็กอ้วน" (passcode: `4ever2026`)
 - **3 Questions:** Menu Selection (select), Dietary restrictions (text), Plus-one (radio)
 
 ### 3. Verify the Backend
@@ -152,7 +152,7 @@ spacetime sql -s http://localhost:3000 community-platform "SELECT * FROM event_q
 spacetime call -s http://localhost:3000 community-platform register_profile '["Alice", "Year 2", "@alice_ig", "66101234"]'
 
 # Test RSVP (correct passcode — should succeed)
-spacetime call -s http://localhost:3000 community-platform submit_response '[1, "4ever2025", "{\"1\":\"Standard\",\"2\":\"None\",\"3\":\"No\"}"]'
+spacetime call -s http://localhost:3000 community-platform submit_response '[1, "4ever2026", "{\"1\":\"กลุ่มไลน์\",\"2\":\"สเต็กหมู M\"}"]'
 
 # Test RSVP (wrong passcode — should be BLOCKED)
 spacetime call -s http://localhost:3000 community-platform submit_response '[1, "wrong", "{}"]'
