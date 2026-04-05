@@ -225,6 +225,18 @@ pub struct Locale {
     /// No users yet
     pub admin_no_users: &'static str,
 
+    // ── Menu Selector ──────────────────────────────────────────────────
+    /// Search placeholder for menu dropdown
+    pub menu_search_placeholder: &'static str,
+    /// "items selected" suffix
+    pub menu_items_selected: &'static str,
+    /// Total label
+    pub menu_total: &'static str,
+    /// Currency symbol (Thai Baht)
+    pub menu_currency: &'static str,
+    /// No results found text
+    pub menu_no_results: &'static str,
+
     // ── Admin Authentication ───────────────────────────────────────────
     /// Admin auth dialog title
     pub admin_auth_title: &'static str,
@@ -366,6 +378,13 @@ pub fn get_locale(lang: Language) -> Locale {
             admin_no_responses: "ยังไม่มีการตอบรับ",
             admin_no_users: "ยังไม่มีสมาชิก",
 
+            // Menu Selector
+            menu_search_placeholder: "ค้นหาเมนู...",
+            menu_items_selected: "รายการที่เลือก",
+            menu_total: "รวมทั้งหมด",
+            menu_currency: "฿",
+            menu_no_results: "ไม่พบเมนูที่ค้นหา",
+
             // Admin Authentication
             admin_auth_title: "เข้าถึงแผงควบคุม",
             admin_auth_passcode_label: "ใส่รหัสผ่านแอดมิน",
@@ -478,6 +497,13 @@ pub fn get_locale(lang: Language) -> Locale {
             admin_back_to_event: "← Back to Event",
             admin_no_responses: "No responses yet",
             admin_no_users: "No users yet",
+
+            // Menu Selector
+            menu_search_placeholder: "Search menu...",
+            menu_items_selected: "selected",
+            menu_total: "Total",
+            menu_currency: "฿",
+            menu_no_results: "No menu items found",
 
             // Admin Authentication
             admin_auth_title: "Admin Access",

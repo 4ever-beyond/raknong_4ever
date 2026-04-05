@@ -213,24 +213,8 @@ mod server_only {
             .await
             .map_err(db_err)?;
 
-            // Questions reference the seeded event by title
-            sqlx::query(
-                r#"
-                INSERT INTO event_question (event_id, label, field_type, options, is_required)
-                VALUES (
-                    (SELECT id FROM event WHERE title = '4EVER รวมตัวกินสเต็กเด็กอ้วน'),
-                    $1, $2, $3, $4
-                )
-                "#,
-            )
-            .bind("เห็นข่าวการเรียกรวมตัวจากที่ไหนเอ่ย")
-            .bind("select")
-            .bind(r#"["กลุ่มไลน์","อินสตาแกรม","เพื่อนบอก","Facebook","อื่นๆ"]"#)
-            .bind(true)
-            .execute(&pool)
-            .await
-            .map_err(db_err)?;
-
+            // Menu question with prices — uses custom `menu_select` field type
+            // Options format: JSON array of objects [{"name":"...","price":N}, ...]
             sqlx::query(
                 r#"
                 INSERT INTO event_question (event_id, label, field_type, options, is_required)
@@ -241,16 +225,44 @@ mod server_only {
                 "#,
             )
             .bind("เมนูที่จะกินค่าาา")
-            .bind("select")
-            .bind(r#"["สเต็กหมู ขนาด S","สเต็กหมู ขนาด M","สเต็กหมู ขนาด L","สเต็กไก่ ขนาด S","สเต็กไก่ ขนาด M","สเต็กไก่ ขนาด L","สเต็กปลาแซลมอน","เมนูอื่นๆ (ระบุในช่องอื่น)"]"#)
+            .bind("menu_select")
+            .bind(r#"[{"name":"สเต็กหมู ขนาด S","price":109},{"name":"สเต็กหมู ขนาด M","price":139},{"name":"สเต็กหมู ขนาด L","price":169},{"name":"สเต็กไก่ ขนาด S","price":99},{"name":"สเต็กไก่ ขนาด M","price":129},{"name":"สเต็กไก่ ขนาด L","price":159},{"name":"สเต็กปลาแซลมอน","price":229},{"name":"เมนูอื่นๆ (ระบุในช่องอื่น)","price":0}]"#)
             .bind(true)
             .execute(&pool)
             .await
             .map_err(db_err)?;
 
-            log::info!("✅ Seed data inserted (default event + 2 questions)");
+            log::info!("✅ Seed data inserted (default event + 1 menu question)");
         } else {
             log::info!("Seed data skipped — {event_count} event(s) already exist");
+
+            // ── Migrate existing data ──────────────────────────────
+            // Remove the old "เห็นข่าว" question if it still exists
+            let removed = sqlx::query(
+                "DELETE FROM event_question WHERE label = 'เห็นข่าวการเรียกรวมตัวจากที่ไหนเอ่ย'",
+            )
+            .execute(&pool)
+            .await
+            .map_err(db_err)?;
+            if removed.rows_affected() > 0 {
+                log::info!("✅ Removed old 'เห็นข่าว' question");
+            }
+
+            // Migrate old menu question to new format with prices
+            let migrated = sqlx::query(
+                r#"
+                UPDATE event_question
+                SET field_type = 'menu_select',
+                    options = '[{"name":"สเต็กหมู ขนาด S","price":109},{"name":"สเต็กหมู ขนาด M","price":139},{"name":"สเต็กหมู ขนาด L","price":169},{"name":"สเต็กไก่ ขนาด S","price":99},{"name":"สเต็กไก่ ขนาด M","price":129},{"name":"สเต็กไก่ ขนาด L","price":159},{"name":"สเต็กปลาแซลมอน","price":229},{"name":"เมนูอื่นๆ (ระบุในช่องอื่น)","price":0}]'
+                WHERE label = 'เมนูที่จะกินค่าาา' AND field_type = 'select'
+                "#,
+            )
+            .execute(&pool)
+            .await
+            .map_err(db_err)?;
+            if migrated.rows_affected() > 0 {
+                log::info!("✅ Migrated menu question to menu_select with prices");
+            }
         }
 
         Ok(())

@@ -16,6 +16,7 @@ mod i18n;
 use std::collections::HashMap;
 
 use dioxus::prelude::*;
+use serde::{Deserialize, Serialize};
 
 use crate::i18n::{get_locale, Language};
 use backend::*;
@@ -600,7 +601,210 @@ fn OnboardingView() -> Element {
 // EVENT VIEW — Dynamic RSVP with passcode
 // =============================================================================
 
+// =============================================================================
+// MENU MULTI-SELECT COMPONENT
+// =============================================================================
+
+/// Menu item parsed from `event_question.options` JSON (with prices).
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct MenuItem {
+    name: String,
+    price: i64,
+}
+
+/// A selected menu item with quantity, stored in the answer JSON.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct MenuSelection {
+    name: String,
+    price: i64,
+    qty: i32,
+}
+
+/// Multi-select menu component with search, quantity controls, and price total.
+///
+/// Reads / writes directly to the `answers` signal at the given `index`.
+/// The answer is stored as a JSON array of [`MenuSelection`] objects.
 #[component]
+fn MenuSelect(options_json: String, answers: Signal<Vec<String>>, index: usize) -> Element {
+    let state: AppState = use_context();
+    let locale = get_locale((state.language)());
+
+    // Parse menu items from the question's options JSON
+    let menu_items: Vec<MenuItem> = serde_json::from_str(&options_json).unwrap_or_default();
+
+    // Local reactive state
+    let mut search = use_signal(String::new);
+    let mut selections: Signal<Vec<MenuSelection>> = use_signal(|| {
+        let current = answers.read().get(index).cloned().unwrap_or_default();
+        serde_json::from_str(&current).unwrap_or_default()
+    });
+
+    // Filter items by search query
+    let query = search().to_lowercase();
+    let filtered: Vec<&MenuItem> = menu_items
+        .iter()
+        .filter(|item| query.is_empty() || item.name.to_lowercase().contains(&query))
+        .collect();
+
+    // Calculate totals
+    let total: i64 = selections().iter().map(|s| s.price * s.qty as i64).sum();
+    let total_qty: i32 = selections().iter().map(|s| s.qty).sum();
+
+    rsx! {
+        div {
+            class: "space-y-3",
+
+            // ── Search Input ────────────────────────────────────
+            div {
+                class: "relative",
+                svg {
+                    class: "w-4 h-4 text-slate-500 absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none",
+                    fill: "none",
+                    stroke: "currentColor",
+                    view_box: "0 0 24 24",
+                    path {
+                        stroke_linecap: "round",
+                        stroke_linejoin: "round",
+                        stroke_width: "2",
+                        d: "M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z",
+                    }
+                }
+                input {
+                    class: "w-full bg-white/5 border border-white/10 rounded-xl pl-10 pr-4 py-2.5 text-white text-sm placeholder-slate-600 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition",
+                    r#type: "text",
+                    placeholder: "{locale.menu_search_placeholder}",
+                    value: "{search}",
+                    oninput: move |e| search.set(e.value()),
+                }
+            }
+
+            // ── Menu Items List ─────────────────────────────────
+            div {
+                class: "max-h-72 overflow-y-auto space-y-1.5 pr-1",
+
+                {filtered.iter().map(|item| {
+                    let item_name = item.name.clone();
+                    let item_name_dec = item_name.clone();
+                    let item_name_inc = item_name.clone();
+                    let item_price = item.price;
+                    let current = selections();
+                    let sel = current.iter().find(|s| s.name == item_name);
+                    let qty = sel.map(|s| s.qty).unwrap_or(0);
+                    let is_selected = qty > 0;
+
+                    rsx! {
+                        div {
+                            key: "{item_name}",
+                            class: if is_selected {
+                                "flex items-center justify-between bg-indigo-500/15 border border-indigo-500/30 rounded-xl px-4 py-2.5 transition"
+                            } else {
+                                "flex items-center justify-between bg-white/[0.03] border border-white/5 rounded-xl px-4 py-2.5 hover:bg-white/[0.06] transition cursor-pointer"
+                            },
+
+                            // Item info
+                            div {
+                                class: "flex-1 min-w-0 mr-3",
+                                p {
+                                    class: if is_selected {
+                                        "text-sm text-white font-medium truncate"
+                                    } else {
+                                        "text-sm text-slate-300 truncate"
+                                    },
+                                    "{item_name}"
+                                }
+                                if item_price > 0 {
+                                    p { class: "text-xs text-slate-500 mt-0.5", "{locale.menu_currency}{item_price}" }
+                                }
+                            }
+
+                            // Quantity controls
+                            div {
+                                class: "flex items-center gap-1.5 shrink-0",
+
+                                if is_selected {
+                                    // Decrease button
+                                    button {
+                                        class: "w-7 h-7 rounded-lg bg-white/10 text-white text-sm font-medium flex items-center justify-center hover:bg-white/20 cursor-pointer transition",
+                                        onclick: move |_| {
+                                            let name_for_remove = item_name_dec.clone();
+                                            let mut s = selections.write();
+                                            if let Some(sel) = s.iter_mut().find(|x| x.name == item_name_dec) {
+                                                sel.qty -= 1;
+                                                if sel.qty == 0 {
+                                                    s.retain(|x| x.name != name_for_remove);
+                                                }
+                                            }
+                                            let json = serde_json::to_string(&*s).unwrap_or_default();
+                                            drop(s);
+                                            let mut a = answers.write();
+                                            if a.len() > index { a[index] = json; }
+                                        },
+                                        "−"
+                                    }
+                                    // Quantity display
+                                    span {
+                                        class: "text-sm text-white font-semibold w-7 text-center",
+                                        "{qty}"
+                                    }
+                                }
+
+                                // Increase button
+                                button {
+                                    class: "w-7 h-7 rounded-lg bg-indigo-500/30 text-indigo-300 text-sm font-bold flex items-center justify-center hover:bg-indigo-500/50 cursor-pointer transition",
+                                    onclick: move |_| {
+                                        let mut s = selections.write();
+                                        if let Some(sel) = s.iter_mut().find(|x| x.name == item_name_inc) {
+                                            sel.qty += 1;
+                                        } else {
+                                            s.push(MenuSelection {
+                                                name: item_name_inc.clone(),
+                                                price: item_price,
+                                                qty: 1,
+                                            });
+                                        }
+                                        let json = serde_json::to_string(&*s).unwrap_or_default();
+                                        drop(s);
+                                        let mut a = answers.write();
+                                        if a.len() > index { a[index] = json; }
+                                    },
+                                    "+"
+                                }
+                            }
+                        }
+                    }
+                })}
+
+                // No results message
+                {filtered.is_empty().then(|| rsx! {
+                    p {
+                        class: "text-center text-slate-600 text-sm py-6",
+                        "{locale.menu_no_results}"
+                    }
+                })}
+            }
+
+            // ── Total Bar ───────────────────────────────────────
+            {(!selections().is_empty()).then(|| rsx! {
+                div {
+                    class: "flex items-center justify-between bg-emerald-500/10 border border-emerald-500/20 rounded-xl px-4 py-3",
+                    span {
+                        class: "text-sm text-emerald-400 font-medium",
+                        "{total_qty} {locale.menu_items_selected}"
+                    }
+                    span {
+                        class: "text-lg text-emerald-300 font-bold",
+                        "{locale.menu_total} {locale.menu_currency}{total}"
+                    }
+                }
+            })}
+        }
+    }
+}
+
+// =============================================================================
+// EVENT VIEW
+// =============================================================================
+
 fn EventView() -> Element {
     let mut state: AppState = use_context();
     let locale = get_locale((state.language)());
@@ -633,7 +837,14 @@ fn EventView() -> Element {
         for (i, q) in qs.iter().enumerate() {
             if q.is_required {
                 if let Some(ans) = current_answers.get(i) {
-                    if ans.trim().is_empty() {
+                    let is_empty = if q.field_type == "menu_select" {
+                        serde_json::from_str::<Vec<MenuSelection>>(ans)
+                            .map(|v| v.is_empty())
+                            .unwrap_or(true)
+                    } else {
+                        ans.trim().is_empty()
+                    };
+                    if is_empty {
                         state
                             .error_message
                             .set(Some(format!("{}{}", loc.err_answer_prefix, q.label)));
@@ -843,6 +1054,16 @@ fn EventView() -> Element {
                                     let idx = index;
 
                                     match field_type.as_str() {
+                                        "menu_select" => {
+                                            let opts_json = question.options.clone().unwrap_or_default();
+                                            rsx! {
+                                                MenuSelect {
+                                                    options_json: opts_json,
+                                                    answers: answers,
+                                                    index: idx,
+                                                }
+                                            }
+                                        }
                                         "select" => {
                                             let opts = parsed_options.clone();
                                             rsx! {
@@ -1437,9 +1658,32 @@ fn format_answers(answers_json: &str, questions: &[EventQuestion]) -> String {
     questions
         .iter()
         .filter_map(|q| {
-            parsed
-                .get(&q.id.to_string())
-                .map(|answer| format!("{}: {}", q.label, answer))
+            parsed.get(&q.id.to_string()).map(|answer| {
+                // Try to parse as menu selections (JSON array of {name, price, qty})
+                if let Ok(selections) = serde_json::from_str::<Vec<MenuSelection>>(answer) {
+                    if selections.is_empty() {
+                        return format!("{}: —", q.label);
+                    }
+                    let lines: Vec<String> = selections
+                        .iter()
+                        .map(|s| {
+                            if s.price > 0 {
+                                format!("  {} x{} ({}฿)", s.name, s.qty, s.price * s.qty as i64)
+                            } else {
+                                format!("  {} x{}", s.name, s.qty)
+                            }
+                        })
+                        .collect();
+                    let total: i64 = selections.iter().map(|s| s.price * s.qty as i64).sum();
+                    if total > 0 {
+                        format!("{}:\n{}\n  Total: {}฿", q.label, lines.join("\n"), total)
+                    } else {
+                        format!("{}:\n{}", q.label, lines.join("\n"))
+                    }
+                } else {
+                    format!("{}: {}", q.label, answer)
+                }
+            })
         })
         .collect::<Vec<_>>()
         .join("\n")
