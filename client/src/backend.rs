@@ -760,7 +760,7 @@ pub async fn get_menu_items() -> Result<Vec<MenuItem>, ServerFnError> {
         .map(|r| MenuItem {
             id: r.try_get("id").unwrap_or(0),
             name: r.try_get("name").unwrap_or_default(),
-            price: r.try_get("price").unwrap_or(0),
+            price: r.try_get::<i32, _>("price").unwrap_or(0) as i64,
             is_active: r.try_get("is_active").unwrap_or(true),
             sort_order: r.try_get("sort_order").unwrap_or(0),
         })
