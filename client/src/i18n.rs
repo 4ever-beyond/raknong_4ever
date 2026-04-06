@@ -237,6 +237,38 @@ pub struct Locale {
     /// No results found text
     pub menu_no_results: &'static str,
 
+    // ── Menu Management (Admin) ────────────────────────────────────────
+    /// Menu management tab title
+    pub admin_menu_tab: &'static str,
+    /// Menu management title
+    pub admin_menu_title: &'static str,
+    /// Menu item name label
+    pub admin_menu_name_label: &'static str,
+    /// Menu item name placeholder
+    pub admin_menu_name_placeholder: &'static str,
+    /// Menu item price label
+    pub admin_menu_price_label: &'static str,
+    /// Menu item price placeholder
+    pub admin_menu_price_placeholder: &'static str,
+    /// Add menu item button
+    pub admin_menu_add: &'static str,
+    /// Save menu item button
+    pub admin_menu_save: &'static str,
+    /// Cancel edit button
+    pub admin_menu_cancel: &'static str,
+    /// Edit menu item button
+    pub admin_menu_edit: &'static str,
+    /// Delete menu item button
+    pub admin_menu_delete: &'static str,
+    /// No menu items text
+    pub admin_menu_no_items: &'static str,
+    /// Menu item active status
+    pub admin_menu_active: &'static str,
+    /// Menu item inactive status
+    pub admin_menu_inactive: &'static str,
+    /// Total menu items count label
+    pub admin_menu_total_items: &'static str,
+
     // ── Admin Authentication ───────────────────────────────────────────
     /// Admin auth dialog title
     pub admin_auth_title: &'static str,
@@ -385,6 +417,23 @@ pub fn get_locale(lang: Language) -> Locale {
             menu_currency: "฿",
             menu_no_results: "ไม่พบเมนูที่ค้นหา",
 
+            // Menu Management (Admin)
+            admin_menu_tab: "เมนูอาหาร",
+            admin_menu_title: "จัดการเมนูอาหาร",
+            admin_menu_name_label: "ชื่อเมนู",
+            admin_menu_name_placeholder: "สเต็กหมู ขนาด M",
+            admin_menu_price_label: "ราคา (฿)",
+            admin_menu_price_placeholder: "139",
+            admin_menu_add: "+ เพิ่มเมนู",
+            admin_menu_save: "บันทึก",
+            admin_menu_cancel: "ยกเลิก",
+            admin_menu_edit: "✏️ แก้ไข",
+            admin_menu_delete: "🗑 ลบ",
+            admin_menu_no_items: "ยังไม่มีเมนูอาหาร",
+            admin_menu_active: "พร้อมให้บริการ",
+            admin_menu_inactive: "ไม่พร้อมให้บริการ",
+            admin_menu_total_items: "เมนูทั้งหมด",
+
             // Admin Authentication
             admin_auth_title: "เข้าถึงแผงควบคุม",
             admin_auth_passcode_label: "ใส่รหัสผ่านแอดมิน",
@@ -504,6 +553,23 @@ pub fn get_locale(lang: Language) -> Locale {
             menu_total: "Total",
             menu_currency: "฿",
             menu_no_results: "No menu items found",
+
+            // Menu Management (Admin)
+            admin_menu_tab: "Menu",
+            admin_menu_title: "Menu Management",
+            admin_menu_name_label: "Menu Item",
+            admin_menu_name_placeholder: "Pork Steak M",
+            admin_menu_price_label: "Price (฿)",
+            admin_menu_price_placeholder: "139",
+            admin_menu_add: "+ Add Item",
+            admin_menu_save: "Save",
+            admin_menu_cancel: "Cancel",
+            admin_menu_edit: "✏️ Edit",
+            admin_menu_delete: "🗑 Delete",
+            admin_menu_no_items: "No menu items yet",
+            admin_menu_active: "Available",
+            admin_menu_inactive: "Unavailable",
+            admin_menu_total_items: "Total Items",
 
             // Admin Authentication
             admin_auth_title: "Admin Access",

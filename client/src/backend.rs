@@ -68,6 +68,19 @@ pub struct EventWithQuestions {
     pub questions: Vec<EventQuestion>,
 }
 
+/// A menu item managed by the restaurant admin.
+///
+/// Stored in the `menu_item` table. For `menu_select` questions the
+/// `get_events` server function populates `options` from active rows.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct MenuItem {
+    pub id: i32,
+    pub name: String,
+    pub price: i64,
+    pub is_active: bool,
+    pub sort_order: i32,
+}
+
 // =============================================================================
 // SERVER-ONLY DATABASE MODULE
 // =============================================================================
@@ -189,6 +202,21 @@ mod server_only {
         .await
         .map_err(db_err)?;
 
+        pool.execute(
+            r#"
+            CREATE TABLE IF NOT EXISTS menu_item (
+                id          SERIAL PRIMARY KEY,
+                name        TEXT NOT NULL,
+                price       INTEGER NOT NULL DEFAULT 0,
+                is_active   BOOLEAN NOT NULL DEFAULT TRUE,
+                sort_order  INTEGER NOT NULL DEFAULT 0,
+                created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            )
+            "#,
+        )
+        .await
+        .map_err(db_err)?;
+
         log::info!("✅ Tables verified / created");
 
         // ── Seed data (only if empty) ─────────────────────────────
@@ -213,8 +241,8 @@ mod server_only {
             .await
             .map_err(db_err)?;
 
-            // Menu question with prices — uses custom `menu_select` field type
-            // Options format: JSON array of objects [{"name":"...","price":N}, ...]
+            // Menu question — uses custom `menu_select` field type
+            // Options are populated dynamically from the `menu_item` table
             sqlx::query(
                 r#"
                 INSERT INTO event_question (event_id, label, field_type, options, is_required)
@@ -226,13 +254,37 @@ mod server_only {
             )
             .bind("เมนูที่จะกินค่าาา")
             .bind("menu_select")
-            .bind(r#"[{"name":"สเต็กหมู ขนาด S","price":109},{"name":"สเต็กหมู ขนาด M","price":139},{"name":"สเต็กหมู ขนาด L","price":169},{"name":"สเต็กไก่ ขนาด S","price":99},{"name":"สเต็กไก่ ขนาด M","price":129},{"name":"สเต็กไก่ ขนาด L","price":159},{"name":"สเต็กปลาแซลมอน","price":229},{"name":"เมนูอื่นๆ (ระบุในช่องอื่น)","price":0}]"#)
+            .bind("[]")
             .bind(true)
             .execute(&pool)
             .await
             .map_err(db_err)?;
 
-            log::info!("✅ Seed data inserted (default event + 1 menu question)");
+            // Seed default menu items
+            let seed_menu = vec![
+                ("สเต็กหมู ขนาด S", 109i32, 1),
+                ("สเต็กหมู ขนาด M", 139, 2),
+                ("สเต็กหมู ขนาด L", 169, 3),
+                ("สเต็กไก่ ขนาด S", 99, 4),
+                ("สเต็กไก่ ขนาด M", 129, 5),
+                ("สเต็กไก่ ขนาด L", 159, 6),
+                ("สเต็กปลาแซลมอน", 229, 7),
+                ("เมนูอื่นๆ (ระบุในช่องอื่น)", 0, 8),
+            ];
+            for (name, price, sort) in &seed_menu {
+                sqlx::query("INSERT INTO menu_item (name, price, sort_order) VALUES ($1, $2, $3)")
+                    .bind(name)
+                    .bind(price)
+                    .bind(*sort)
+                    .execute(&pool)
+                    .await
+                    .map_err(db_err)?;
+            }
+
+            log::info!(
+                "✅ Seed data inserted (default event + menu question + {} menu items)",
+                seed_menu.len()
+            );
         } else {
             log::info!("Seed data skipped — {event_count} event(s) already exist");
 
@@ -248,12 +300,11 @@ mod server_only {
                 log::info!("✅ Removed old 'เห็นข่าว' question");
             }
 
-            // Migrate old menu question to new format with prices
+            // Migrate old menu question to menu_select (options now come from menu_item table)
             let migrated = sqlx::query(
                 r#"
                 UPDATE event_question
-                SET field_type = 'menu_select',
-                    options = '[{"name":"สเต็กหมู ขนาด S","price":109},{"name":"สเต็กหมู ขนาด M","price":139},{"name":"สเต็กหมู ขนาด L","price":169},{"name":"สเต็กไก่ ขนาด S","price":99},{"name":"สเต็กไก่ ขนาด M","price":129},{"name":"สเต็กไก่ ขนาด L","price":159},{"name":"สเต็กปลาแซลมอน","price":229},{"name":"เมนูอื่นๆ (ระบุในช่องอื่น)","price":0}]'
+                SET field_type = 'menu_select', options = '[]'
                 WHERE label = 'เมนูที่จะกินค่าาา' AND field_type = 'select'
                 "#,
             )
@@ -261,7 +312,37 @@ mod server_only {
             .await
             .map_err(db_err)?;
             if migrated.rows_affected() > 0 {
-                log::info!("✅ Migrated menu question to menu_select with prices");
+                log::info!("✅ Migrated menu question to menu_select (from menu_item table)");
+            }
+
+            // Seed menu items if the table is empty
+            let menu_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM menu_item")
+                .fetch_one(&pool)
+                .await
+                .map_err(db_err)?;
+            if menu_count == 0 {
+                let seed_menu = vec![
+                    ("สเต็กหมู ขนาด S", 109i32, 1),
+                    ("สเต็กหมู ขนาด M", 139, 2),
+                    ("สเต็กหมู ขนาด L", 169, 3),
+                    ("สเต็กไก่ ขนาด S", 99, 4),
+                    ("สเต็กไก่ ขนาด M", 129, 5),
+                    ("สเต็กไก่ ขนาด L", 159, 6),
+                    ("สเต็กปลาแซลมอน", 229, 7),
+                    ("เมนูอื่นๆ (ระบุในช่องอื่น)", 0, 8),
+                ];
+                for (name, price, sort) in &seed_menu {
+                    sqlx::query(
+                        "INSERT INTO menu_item (name, price, sort_order) VALUES ($1, $2, $3)",
+                    )
+                    .bind(name)
+                    .bind(price)
+                    .bind(*sort)
+                    .execute(&pool)
+                    .await
+                    .map_err(db_err)?;
+                }
+                log::info!("✅ Seeded {} default menu items", seed_menu.len());
             }
         }
 
@@ -470,15 +551,44 @@ pub async fn get_events() -> Result<Vec<EventWithQuestions>, ServerFnError> {
         .await
         .map_err(server_only::db_err)?;
 
+        // Pre-fetch active menu items once (used by menu_select questions)
+        let menu_rows = sqlx::query(
+            "SELECT name, price FROM menu_item WHERE is_active = true ORDER BY sort_order, id",
+        )
+        .fetch_all(&pool)
+        .await
+        .map_err(server_only::db_err)?;
+
+        let menu_options_json: String = {
+            let items: Vec<serde_json::Value> = menu_rows
+                .iter()
+                .map(|r| {
+                    serde_json::json!({
+                        "name": r.try_get::<String, _>("name").unwrap_or_default(),
+                        "price": r.try_get::<i32, _>("price").unwrap_or(0),
+                    })
+                })
+                .collect();
+            serde_json::to_string(&items).unwrap_or_default()
+        };
+
         let questions: Vec<EventQuestion> = q_rows
             .into_iter()
             .map(|qr| -> Result<EventQuestion, ServerFnError> {
+                let field_type: String = qr.try_get("field_type").map_err(server_only::db_err)?;
+                let mut options: Option<String> = qr.try_get("options").ok();
+
+                // For menu_select questions, populate options from the menu_item table
+                if field_type == "menu_select" {
+                    options = Some(menu_options_json.clone());
+                }
+
                 Ok(EventQuestion {
                     id: qr.try_get("id").map_err(server_only::db_err)?,
                     event_id: qr.try_get("event_id").map_err(server_only::db_err)?,
                     label: qr.try_get("label").map_err(server_only::db_err)?,
-                    field_type: qr.try_get("field_type").map_err(server_only::db_err)?,
-                    options: qr.try_get("options").ok(),
+                    field_type,
+                    options,
                     is_required: qr.try_get("is_required").map_err(server_only::db_err)?,
                 })
             })
@@ -629,6 +739,88 @@ pub async fn delete_event_response(response_id: i64) -> Result<(), ServerFnError
         .map_err(server_only::db_err)?;
 
     log::info!("[delete_event_response] id={response_id} deleted");
+    Ok(())
+}
+
+#[server(endpoint = "get_menu_items")]
+pub async fn get_menu_items() -> Result<Vec<MenuItem>, ServerFnError> {
+    let pool = server_only::get_pool().await?;
+
+    let rows = sqlx::query(
+        "SELECT id, name, price, is_active, sort_order \
+         FROM menu_item \
+         ORDER BY sort_order, id",
+    )
+    .fetch_all(&pool)
+    .await
+    .map_err(server_only::db_err)?;
+
+    Ok(rows
+        .into_iter()
+        .map(|r| MenuItem {
+            id: r.try_get("id").unwrap_or(0),
+            name: r.try_get("name").unwrap_or_default(),
+            price: r.try_get("price").unwrap_or(0),
+            is_active: r.try_get("is_active").unwrap_or(true),
+            sort_order: r.try_get("sort_order").unwrap_or(0),
+        })
+        .collect())
+}
+
+#[server(endpoint = "add_menu_item")]
+pub async fn add_menu_item(name: String, price: i64) -> Result<(), ServerFnError> {
+    let pool = server_only::get_pool().await?;
+
+    let max_sort: i32 = sqlx::query_scalar("SELECT COALESCE(MAX(sort_order), 0) FROM menu_item")
+        .fetch_one(&pool)
+        .await
+        .map_err(server_only::db_err)?;
+
+    sqlx::query("INSERT INTO menu_item (name, price, sort_order) VALUES ($1, $2, $3)")
+        .bind(&name)
+        .bind(price as i32)
+        .bind(max_sort + 1)
+        .execute(&pool)
+        .await
+        .map_err(server_only::db_err)?;
+
+    log::info!("[add_menu_item] Added: {name} (฿{price})");
+    Ok(())
+}
+
+#[server(endpoint = "update_menu_item")]
+pub async fn update_menu_item(
+    id: i64,
+    name: String,
+    price: i64,
+    is_active: bool,
+) -> Result<(), ServerFnError> {
+    let pool = server_only::get_pool().await?;
+
+    sqlx::query("UPDATE menu_item SET name = $1, price = $2, is_active = $3 WHERE id = $4")
+        .bind(&name)
+        .bind(price as i32)
+        .bind(is_active)
+        .bind(id)
+        .execute(&pool)
+        .await
+        .map_err(server_only::db_err)?;
+
+    log::info!("[update_menu_item] Updated id={id}: {name} (฿{price}) active={is_active}");
+    Ok(())
+}
+
+#[server(endpoint = "delete_menu_item")]
+pub async fn delete_menu_item(id: i64) -> Result<(), ServerFnError> {
+    let pool = server_only::get_pool().await?;
+
+    sqlx::query("DELETE FROM menu_item WHERE id = $1")
+        .bind(id)
+        .execute(&pool)
+        .await
+        .map_err(server_only::db_err)?;
+
+    log::info!("[delete_menu_item] Deleted id={id}");
     Ok(())
 }
 

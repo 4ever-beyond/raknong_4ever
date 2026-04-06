@@ -61,6 +61,7 @@ struct AppState {
     language: SyncSignal<Language>,
     all_users: SyncSignal<Vec<UserProfile>>,
     all_responses: SyncSignal<Vec<EventResponse>>,
+    menu_items: SyncSignal<Vec<MenuItem>>,
     session_id: SyncSignal<String>,
     data_loaded: SyncSignal<bool>,
 }
@@ -179,7 +180,7 @@ async fn load_initial_data(mut state: AppState) {
     state.data_loaded.set(true);
 }
 
-/// Refresh admin dashboard data (users + responses).
+/// Refresh admin dashboard data (users + responses + menu items).
 async fn load_admin_data(mut state: AppState) -> Result<(), String> {
     match get_all_users().await {
         Ok(users) => state.all_users.set(users),
@@ -188,6 +189,10 @@ async fn load_admin_data(mut state: AppState) -> Result<(), String> {
     match get_all_responses().await {
         Ok(responses) => state.all_responses.set(responses),
         Err(e) => return Err(format!("Failed to load responses: {e}")),
+    }
+    match get_menu_items().await {
+        Ok(items) => state.menu_items.set(items),
+        Err(e) => return Err(format!("Failed to load menu: {e}")),
     }
     Ok(())
 }
@@ -207,6 +212,7 @@ fn App() -> Element {
         language: use_signal_sync(|| Language::Thai),
         all_users: use_signal_sync(Vec::new),
         all_responses: use_signal_sync(Vec::new),
+        menu_items: use_signal_sync(Vec::new),
         session_id: use_signal_sync(String::new),
         data_loaded: use_signal_sync(|| false),
     };
@@ -605,9 +611,10 @@ fn OnboardingView() -> Element {
 // MENU MULTI-SELECT COMPONENT
 // =============================================================================
 
-/// Menu item parsed from `event_question.options` JSON (with prices).
+/// Menu option parsed from `event_question.options` JSON (with prices).
+/// Named `MenuOption` to avoid collision with `backend::MenuItem`.
 #[derive(Clone, Debug, Serialize, Deserialize)]
-struct MenuItem {
+struct MenuOption {
     name: String,
     price: i64,
 }
@@ -630,7 +637,7 @@ fn MenuSelect(options_json: String, answers: Signal<Vec<String>>, index: usize) 
     let locale = get_locale((state.language)());
 
     // Parse menu items from the question's options JSON
-    let menu_items: Vec<MenuItem> = serde_json::from_str(&options_json).unwrap_or_default();
+    let menu_items: Vec<MenuOption> = serde_json::from_str(&options_json).unwrap_or_default();
 
     // Local reactive state
     let mut search = use_signal(String::new);
@@ -641,7 +648,7 @@ fn MenuSelect(options_json: String, answers: Signal<Vec<String>>, index: usize) 
 
     // Filter items by search query
     let query = search().to_lowercase();
-    let filtered: Vec<&MenuItem> = menu_items
+    let filtered: Vec<&MenuOption> = menu_items
         .iter()
         .filter(|item| query.is_empty() || item.name.to_lowercase().contains(&query))
         .collect();
@@ -1398,8 +1405,17 @@ fn AdminView() -> Element {
     let users = (state.all_users)();
     let responses = (state.all_responses)();
     let questions = (state.event_questions)();
+    let menu_items = (state.menu_items)();
+    let menu_items_len = menu_items.len();
+    let active_menu_count = menu_items.iter().filter(|m| m.is_active).count();
 
-    let mut show_users_tab = use_signal(|| true);
+    let mut active_tab = use_signal(|| 0u8);
+    let mut new_menu_name = use_signal(String::new);
+    let mut new_menu_price = use_signal(String::new);
+    let mut editing_id = use_signal(|| None::<i32>);
+    let mut edit_menu_name = use_signal(String::new);
+    let mut edit_menu_price = use_signal(String::new);
+    let mut editing_is_active = use_signal(|| true);
 
     let total_users = users.len();
     let total_responses = responses.len();
@@ -1455,29 +1471,38 @@ fn AdminView() -> Element {
 
             // ── Tab Bar ─────────────────────────────────────────────
             div {
-                class: "flex gap-2",
+                class: "flex gap-2 flex-wrap",
                 button {
-                    class: if show_users_tab() {
+                    class: if active_tab() == 0 {
                         "px-4 py-2 rounded-xl font-medium bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 cursor-pointer transition"
                     } else {
                         "px-4 py-2 rounded-xl font-medium bg-white/5 text-slate-400 border border-white/10 hover:bg-white/10 cursor-pointer transition"
                     },
-                    onclick: move |_| show_users_tab.set(true),
+                    onclick: move |_| active_tab.set(0),
                     "{locale.admin_users_tab} ({total_users})"
                 }
                 button {
-                    class: if !show_users_tab() {
+                    class: if active_tab() == 1 {
                         "px-4 py-2 rounded-xl font-medium bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 cursor-pointer transition"
                     } else {
                         "px-4 py-2 rounded-xl font-medium bg-white/5 text-slate-400 border border-white/10 hover:bg-white/10 cursor-pointer transition"
                     },
-                    onclick: move |_| show_users_tab.set(false),
+                    onclick: move |_| active_tab.set(1),
                     "{locale.admin_responses_tab} ({total_responses})"
+                }
+                button {
+                    class: if active_tab() == 2 {
+                        "px-4 py-2 rounded-xl font-medium bg-amber-500/20 text-amber-300 border border-amber-500/30 cursor-pointer transition"
+                    } else {
+                        "px-4 py-2 rounded-xl font-medium bg-white/5 text-slate-400 border border-white/10 hover:bg-white/10 cursor-pointer transition"
+                    },
+                    onclick: move |_| active_tab.set(2),
+                    "🍽 {locale.admin_menu_tab} ({menu_items_len})"
                 }
             }
 
             // ── Tab Content ─────────────────────────────────────────
-            if show_users_tab() {
+            if active_tab() == 0 {
                 // Users Tab
                 if users.is_empty() {
                     div {
@@ -1564,7 +1589,7 @@ fn AdminView() -> Element {
                         }
                     }
                 }
-            } else {
+            } else if active_tab() == 1 {
                 // Responses Tab
                 if responses.is_empty() {
                     div {
@@ -1637,6 +1662,207 @@ fn AdminView() -> Element {
                                 }
                             }
                         }
+                    }
+                }
+            } else {
+                // ── Menu Management Tab ──────────────────────────────
+
+                // Stats row
+                div {
+                    class: "grid grid-cols-2 gap-4",
+
+                    div {
+                        class: "bg-white/[0.04] border border-white/10 rounded-2xl p-5",
+                        p { class: "text-xs text-slate-500 uppercase tracking-wider font-medium", "{locale.admin_menu_total_items}" }
+                        p { class: "text-3xl font-bold text-white mt-1", "{menu_items_len}" }
+                    }
+                    div {
+                        class: "bg-white/[0.04] border border-emerald-500/20 rounded-2xl p-5",
+                        p { class: "text-xs text-emerald-400 uppercase tracking-wider font-medium", "{locale.admin_menu_active}" }
+                        p { class: "text-3xl font-bold text-emerald-300 mt-1", "{active_menu_count}" }
+                    }
+                }
+
+                // Add new item form
+                div {
+                    class: "bg-white/[0.04] border border-dashed border-white/20 rounded-xl p-4",
+
+                    div {
+                        class: "flex items-center gap-2 mb-3",
+                        span { class: "text-base", "➕" }
+                        p { class: "text-sm text-slate-400 font-medium", "{locale.admin_menu_add}" }
+                    }
+                    div {
+                        class: "flex gap-3 flex-wrap",
+                        input {
+                            class: "flex-1 min-w-[180px] bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-white text-sm placeholder-slate-600 focus:outline-none focus:ring-2 focus:ring-indigo-500 transition",
+                            r#type: "text",
+                            placeholder: "{locale.admin_menu_name_placeholder}",
+                            value: "{new_menu_name}",
+                            oninput: move |e| new_menu_name.set(e.value()),
+                        }
+                        input {
+                            class: "w-28 bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-white text-sm placeholder-slate-600 focus:outline-none focus:ring-2 focus:ring-indigo-500 transition",
+                            r#type: "number",
+                            placeholder: "{locale.admin_menu_price_placeholder}",
+                            value: "{new_menu_price}",
+                            oninput: move |e| new_menu_price.set(e.value()),
+                        }
+                        button {
+                            class: "px-4 py-2 rounded-lg bg-indigo-500 hover:bg-indigo-600 text-white text-sm font-medium cursor-pointer transition shrink-0",
+                            onclick: move |_| {
+                                let name = new_menu_name.read().clone();
+                                let price = new_menu_price.read().parse::<i64>().unwrap_or(0);
+                                if name.trim().is_empty() { return; }
+                                let mut state = state;
+                                spawn(async move {
+                                    let _ = add_menu_item(name, price).await;
+                                    new_menu_name.set(String::new());
+                                    new_menu_price.set(String::new());
+                                    let _ = load_admin_data(state).await;
+                                });
+                            },
+                            "{locale.admin_menu_add}"
+                        }
+                    }
+                }
+
+                // Menu items list
+                if menu_items.is_empty() {
+                    div {
+                        class: "text-center py-16 text-slate-500",
+                        p { "{locale.admin_menu_no_items}" }
+                    }
+                } else {
+                    div {
+                        class: "space-y-2",
+                        {menu_items.iter().map(|item| {
+                            let item_id = item.id;
+                            let item_name = item.name.clone();
+                            let name_for_toggle = item.name.clone();
+                            let item_price = item.price;
+                            let is_active = item.is_active;
+                            let is_editing = editing_id() == Some(item.id);
+                            let state = state;
+
+                            rsx! {
+                                div {
+                                    key: "menu_{item_id}",
+                                    class: if is_editing {
+                                        "bg-indigo-500/10 border border-indigo-500/30 rounded-xl px-4 py-3"
+                                    } else {
+                                        "bg-white/[0.03] border border-white/5 rounded-xl px-4 py-3 hover:bg-white/[0.06] transition"
+                                    },
+
+                                    if is_editing {
+                                        // ── Edit mode ─────────────────────
+                                        div {
+                                            class: "flex items-center gap-3 flex-wrap",
+                                            input {
+                                                class: "flex-1 min-w-[140px] bg-white/5 border border-white/10 rounded-lg px-3 py-1.5 text-white text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 transition",
+                                                r#type: "text",
+                                                value: "{edit_menu_name}",
+                                                oninput: move |e| edit_menu_name.set(e.value()),
+                                            }
+                                            input {
+                                                class: "w-24 bg-white/5 border border-white/10 rounded-lg px-3 py-1.5 text-white text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 transition",
+                                                r#type: "number",
+                                                value: "{edit_menu_price}",
+                                                oninput: move |e| edit_menu_price.set(e.value()),
+                                            }
+                                            button {
+                                                class: "px-3 py-1.5 rounded-lg bg-emerald-500/20 text-emerald-400 text-xs font-medium cursor-pointer hover:bg-emerald-500/30 transition",
+                                                onclick: move |_| {
+                                                    let name = edit_menu_name.read().clone();
+                                                    let price = edit_menu_price.read().parse::<i64>().unwrap_or(0);
+                                                    let active = editing_is_active();
+                                                    if name.trim().is_empty() { return; }
+                                                    let state = state;
+                                                    spawn(async move {
+                                                        let _ = update_menu_item(item_id as i64, name, price, active).await;
+                                                        editing_id.set(None);
+                                                        let _ = load_admin_data(state).await;
+                                                    });
+                                                },
+                                                "{locale.admin_menu_save}"
+                                            }
+                                            button {
+                                                class: "px-3 py-1.5 rounded-lg bg-white/10 text-slate-400 text-xs font-medium cursor-pointer hover:bg-white/20 transition",
+                                                onclick: move |_| editing_id.set(None),
+                                                "{locale.admin_menu_cancel}"
+                                            }
+                                        }
+                                    } else {
+                                        // ── Display mode ──────────────────
+                                        div {
+                                            class: "flex items-center justify-between gap-3",
+
+                                            // Item info
+                                            div {
+                                                class: "flex-1 min-w-0",
+                                                p {
+                                                    class: if is_active {
+                                                        "text-sm text-white font-medium truncate"
+                                                    } else {
+                                                        "text-sm text-slate-500 line-through truncate"
+                                                    },
+                                                    "{item.name}"
+                                                }
+                                                p { class: "text-xs text-slate-500 mt-0.5", "฿{item.price}" }
+                                            }
+
+                                            // Action buttons
+                                            div {
+                                                class: "flex items-center gap-2 shrink-0",
+
+                                                // Active / Inactive toggle
+                                                button {
+                                                    class: if is_active {
+                                                        "text-xs px-2.5 py-1 rounded-lg bg-emerald-500/15 text-emerald-400 border border-emerald-500/20 cursor-pointer transition font-medium"
+                                                    } else {
+                                                        "text-xs px-2.5 py-1 rounded-lg bg-slate-500/15 text-slate-400 border border-slate-500/20 cursor-pointer transition font-medium"
+                                                    },
+                                                    onclick: move |_| {
+                                                            let state = state;
+                                                            let name = name_for_toggle.clone();
+                                                        spawn(async move {
+                                                            let _ = update_menu_item(item_id as i64, name, item_price, !is_active).await;
+                                                            let _ = load_admin_data(state).await;
+                                                        });
+                                                    },
+                                                    if is_active { "{locale.admin_menu_active}" } else { "{locale.admin_menu_inactive}" }
+                                                }
+
+                                                // Edit button
+                                                button {
+                                                    class: "text-xs px-2.5 py-1 rounded-lg bg-indigo-500/15 text-indigo-400 border border-indigo-500/20 cursor-pointer transition font-medium",
+                                                    onclick: move |_| {
+                                                            edit_menu_name.set(item_name.clone());
+                                                        edit_menu_price.set(item_price.to_string());
+                                                        editing_is_active.set(is_active);
+                                                        editing_id.set(Some(item_id));
+                                                    },
+                                                    "{locale.admin_menu_edit}"
+                                                }
+
+                                                // Delete button
+                                                button {
+                                                    class: "text-xs px-2.5 py-1 rounded-lg bg-red-500/15 text-red-400 border border-red-500/20 cursor-pointer transition font-medium",
+                                                    onclick: move |_| {
+                                                        let state = state;
+                                                        spawn(async move {
+                                                            let _ = delete_menu_item(item_id as i64).await;
+                                                            let _ = load_admin_data(state).await;
+                                                        });
+                                                    },
+                                                    "{locale.admin_menu_delete}"
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        })}
                     }
                 }
             }
