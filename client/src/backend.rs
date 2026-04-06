@@ -79,6 +79,7 @@ pub struct MenuItem {
     pub price: i64,
     pub is_active: bool,
     pub sort_order: i32,
+    pub category: String,
 }
 
 // =============================================================================
@@ -217,6 +218,21 @@ mod server_only {
         .await
         .map_err(db_err)?;
 
+        // ── Migrations ───────────────────────────────────────────
+        // Add category column to menu_item if it doesn't exist yet
+        pool.execute(
+            "ALTER TABLE menu_item ADD COLUMN IF NOT EXISTS category TEXT NOT NULL DEFAULT 'Steaks'",
+        )
+        .await
+        .map_err(db_err)?;
+
+        // Update existing items with proper categories based on name
+        pool.execute(
+            "UPDATE menu_item SET category = 'Other' WHERE name LIKE 'เมนูอื่น%' AND category = 'Steaks'",
+        )
+        .await
+        .map_err(db_err)?;
+
         log::info!("✅ Tables verified / created");
 
         // ── Seed data (only if empty) ─────────────────────────────
@@ -261,21 +277,22 @@ mod server_only {
             .map_err(db_err)?;
 
             // Seed default menu items
-            let seed_menu = vec![
-                ("สเต็กหมู ขนาด S", 109i32, 1),
-                ("สเต็กหมู ขนาด M", 139, 2),
-                ("สเต็กหมู ขนาด L", 169, 3),
-                ("สเต็กไก่ ขนาด S", 99, 4),
-                ("สเต็กไก่ ขนาด M", 129, 5),
-                ("สเต็กไก่ ขนาด L", 159, 6),
-                ("สเต็กปลาแซลมอน", 229, 7),
-                ("เมนูอื่นๆ (ระบุในช่องอื่น)", 0, 8),
+            let seed_menu: Vec<(&str, i32, i32, &str)> = vec![
+                ("สเต็กหมู ขนาด S", 109, 1, "Steaks"),
+                ("สเต็กหมู ขนาด M", 139, 2, "Steaks"),
+                ("สเต็กหมู ขนาด L", 169, 3, "Steaks"),
+                ("สเต็กไก่ ขนาด S", 99, 4, "Steaks"),
+                ("สเต็กไก่ ขนาด M", 129, 5, "Steaks"),
+                ("สเต็กไก่ ขนาด L", 159, 6, "Steaks"),
+                ("สเต็กปลาแซลมอน", 229, 7, "Steaks"),
+                ("เมนูอื่นๆ (ระบุในช่องอื่น)", 0, 8, "Other"),
             ];
-            for (name, price, sort) in &seed_menu {
-                sqlx::query("INSERT INTO menu_item (name, price, sort_order) VALUES ($1, $2, $3)")
+            for (name, price, sort, category) in &seed_menu {
+                sqlx::query("INSERT INTO menu_item (name, price, sort_order, category) VALUES ($1, $2, $3, $4)")
                     .bind(name)
                     .bind(price)
                     .bind(*sort)
+                    .bind(category)
                     .execute(&pool)
                     .await
                     .map_err(db_err)?;
@@ -321,23 +338,24 @@ mod server_only {
                 .await
                 .map_err(db_err)?;
             if menu_count == 0 {
-                let seed_menu = vec![
-                    ("สเต็กหมู ขนาด S", 109i32, 1),
-                    ("สเต็กหมู ขนาด M", 139, 2),
-                    ("สเต็กหมู ขนาด L", 169, 3),
-                    ("สเต็กไก่ ขนาด S", 99, 4),
-                    ("สเต็กไก่ ขนาด M", 129, 5),
-                    ("สเต็กไก่ ขนาด L", 159, 6),
-                    ("สเต็กปลาแซลมอน", 229, 7),
-                    ("เมนูอื่นๆ (ระบุในช่องอื่น)", 0, 8),
+                let seed_menu: Vec<(&str, i32, i32, &str)> = vec![
+                    ("สเต็กหมู ขนาด S", 109, 1, "Steaks"),
+                    ("สเต็กหมู ขนาด M", 139, 2, "Steaks"),
+                    ("สเต็กหมู ขนาด L", 169, 3, "Steaks"),
+                    ("สเต็กไก่ ขนาด S", 99, 4, "Steaks"),
+                    ("สเต็กไก่ ขนาด M", 129, 5, "Steaks"),
+                    ("สเต็กไก่ ขนาด L", 159, 6, "Steaks"),
+                    ("สเต็กปลาแซลมอน", 229, 7, "Steaks"),
+                    ("เมนูอื่นๆ (ระบุในช่องอื่น)", 0, 8, "Other"),
                 ];
-                for (name, price, sort) in &seed_menu {
+                for (name, price, sort, category) in &seed_menu {
                     sqlx::query(
-                        "INSERT INTO menu_item (name, price, sort_order) VALUES ($1, $2, $3)",
+                        "INSERT INTO menu_item (name, price, sort_order, category) VALUES ($1, $2, $3, $4)",
                     )
                     .bind(name)
                     .bind(price)
                     .bind(*sort)
+                    .bind(category)
                     .execute(&pool)
                     .await
                     .map_err(db_err)?;
@@ -553,7 +571,7 @@ pub async fn get_events() -> Result<Vec<EventWithQuestions>, ServerFnError> {
 
         // Pre-fetch active menu items once (used by menu_select questions)
         let menu_rows = sqlx::query(
-            "SELECT name, price FROM menu_item WHERE is_active = true ORDER BY sort_order, id",
+            "SELECT name, price, category FROM menu_item WHERE is_active = true ORDER BY sort_order, id",
         )
         .fetch_all(&pool)
         .await
@@ -566,6 +584,7 @@ pub async fn get_events() -> Result<Vec<EventWithQuestions>, ServerFnError> {
                     serde_json::json!({
                         "name": r.try_get::<String, _>("name").unwrap_or_default(),
                         "price": r.try_get::<i32, _>("price").unwrap_or(0),
+                        "category": r.try_get::<String, _>("category").unwrap_or_else(|_| "Steaks".to_string()),
                     })
                 })
                 .collect();
@@ -747,7 +766,7 @@ pub async fn get_menu_items() -> Result<Vec<MenuItem>, ServerFnError> {
     let pool = server_only::get_pool().await?;
 
     let rows = sqlx::query(
-        "SELECT id, name, price, is_active, sort_order \
+        "SELECT id, name, price, is_active, sort_order, category \
          FROM menu_item \
          ORDER BY sort_order, id",
     )
@@ -763,12 +782,19 @@ pub async fn get_menu_items() -> Result<Vec<MenuItem>, ServerFnError> {
             price: r.try_get::<i32, _>("price").unwrap_or(0) as i64,
             is_active: r.try_get("is_active").unwrap_or(true),
             sort_order: r.try_get("sort_order").unwrap_or(0),
+            category: r
+                .try_get("category")
+                .unwrap_or_else(|_| "Steaks".to_string()),
         })
         .collect())
 }
 
 #[server(endpoint = "add_menu_item")]
-pub async fn add_menu_item(name: String, price: i64) -> Result<(), ServerFnError> {
+pub async fn add_menu_item(
+    name: String,
+    price: i64,
+    category: String,
+) -> Result<(), ServerFnError> {
     let pool = server_only::get_pool().await?;
 
     let max_sort: i32 = sqlx::query_scalar("SELECT COALESCE(MAX(sort_order), 0) FROM menu_item")
@@ -776,15 +802,18 @@ pub async fn add_menu_item(name: String, price: i64) -> Result<(), ServerFnError
         .await
         .map_err(server_only::db_err)?;
 
-    sqlx::query("INSERT INTO menu_item (name, price, sort_order) VALUES ($1, $2, $3)")
-        .bind(&name)
-        .bind(price as i32)
-        .bind(max_sort + 1)
-        .execute(&pool)
-        .await
-        .map_err(server_only::db_err)?;
+    sqlx::query(
+        "INSERT INTO menu_item (name, price, sort_order, category) VALUES ($1, $2, $3, $4)",
+    )
+    .bind(&name)
+    .bind(price as i32)
+    .bind(max_sort + 1)
+    .bind(&category)
+    .execute(&pool)
+    .await
+    .map_err(server_only::db_err)?;
 
-    log::info!("[add_menu_item] Added: {name} (฿{price})");
+    log::info!("[add_menu_item] Added: {name} (฿{price}) category={category}");
     Ok(())
 }
 
@@ -794,19 +823,23 @@ pub async fn update_menu_item(
     name: String,
     price: i64,
     is_active: bool,
+    category: String,
 ) -> Result<(), ServerFnError> {
     let pool = server_only::get_pool().await?;
 
-    sqlx::query("UPDATE menu_item SET name = $1, price = $2, is_active = $3 WHERE id = $4")
-        .bind(&name)
-        .bind(price as i32)
-        .bind(is_active)
-        .bind(id)
-        .execute(&pool)
-        .await
-        .map_err(server_only::db_err)?;
+    sqlx::query(
+        "UPDATE menu_item SET name = $1, price = $2, is_active = $3, category = $4 WHERE id = $5",
+    )
+    .bind(&name)
+    .bind(price as i32)
+    .bind(is_active)
+    .bind(&category)
+    .bind(id)
+    .execute(&pool)
+    .await
+    .map_err(server_only::db_err)?;
 
-    log::info!("[update_menu_item] Updated id={id}: {name} (฿{price}) active={is_active}");
+    log::info!("[update_menu_item] Updated id={id}: {name} (฿{price}) active={is_active} category={category}");
     Ok(())
 }
 
@@ -821,6 +854,192 @@ pub async fn delete_menu_item(id: i64) -> Result<(), ServerFnError> {
         .map_err(server_only::db_err)?;
 
     log::info!("[delete_menu_item] Deleted id={id}");
+    Ok(())
+}
+
+/// Fetch ALL events (including inactive) for the admin dashboard.
+///
+/// Returns events ordered by priority DESC, created_at DESC.
+#[server(endpoint = "get_all_events")]
+pub async fn get_all_events() -> Result<Vec<EventWithQuestions>, ServerFnError> {
+    let pool = server_only::get_pool().await?;
+
+    let event_rows = sqlx::query(
+        "SELECT id, title, description, event_date, priority, is_active, passcode, created_at \
+         FROM event \
+         ORDER BY priority DESC, created_at DESC",
+    )
+    .fetch_all(&pool)
+    .await
+    .map_err(server_only::db_err)?;
+
+    let mut result = Vec::new();
+
+    for row in event_rows {
+        let event_id: i32 = row.try_get("id").map_err(server_only::db_err)?;
+        let created_at: chrono::DateTime<chrono::Utc> =
+            row.try_get("created_at").map_err(server_only::db_err)?;
+
+        let event_data = EventData {
+            id: event_id,
+            title: row.try_get("title").map_err(server_only::db_err)?,
+            description: row.try_get("description").map_err(server_only::db_err)?,
+            event_date: row.try_get("event_date").map_err(server_only::db_err)?,
+            priority: row.try_get("priority").map_err(server_only::db_err)?,
+            is_active: row.try_get("is_active").map_err(server_only::db_err)?,
+            passcode: row.try_get("passcode").map_err(server_only::db_err)?,
+            created_at: created_at.to_rfc3339(),
+        };
+
+        // Fetch questions for this event
+        let q_rows = sqlx::query(
+            "SELECT id, event_id, label, field_type, options, is_required \
+             FROM event_question \
+             WHERE event_id = $1 \
+             ORDER BY id",
+        )
+        .bind(event_id)
+        .fetch_all(&pool)
+        .await
+        .map_err(server_only::db_err)?;
+
+        // Pre-fetch active menu items once (used by menu_select questions)
+        let menu_rows = sqlx::query(
+            "SELECT name, price, category FROM menu_item WHERE is_active = true ORDER BY sort_order, id",
+        )
+        .fetch_all(&pool)
+        .await
+        .map_err(server_only::db_err)?;
+
+        let menu_options_json: String = {
+            let items: Vec<serde_json::Value> = menu_rows
+                .iter()
+                .map(|r| {
+                    serde_json::json!({
+                        "name": r.try_get::<String, _>("name").unwrap_or_default(),
+                        "price": r.try_get::<i32, _>("price").unwrap_or(0),
+                        "category": r.try_get::<String, _>("category").unwrap_or_else(|_| "Steaks".to_string()),
+                    })
+                })
+                .collect();
+            serde_json::to_string(&items).unwrap_or_default()
+        };
+
+        let questions: Vec<EventQuestion> = q_rows
+            .into_iter()
+            .map(|qr| -> Result<EventQuestion, ServerFnError> {
+                let field_type: String = qr.try_get("field_type").map_err(server_only::db_err)?;
+                let mut options: Option<String> = qr.try_get("options").ok();
+
+                // For menu_select questions, populate options from the menu_item table
+                if field_type == "menu_select" {
+                    options = Some(menu_options_json.clone());
+                }
+
+                Ok(EventQuestion {
+                    id: qr.try_get("id").map_err(server_only::db_err)?,
+                    event_id: qr.try_get("event_id").map_err(server_only::db_err)?,
+                    label: qr.try_get("label").map_err(server_only::db_err)?,
+                    field_type,
+                    options,
+                    is_required: qr.try_get("is_required").map_err(server_only::db_err)?,
+                })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+
+        result.push(EventWithQuestions {
+            event: event_data,
+            questions,
+        });
+    }
+
+    Ok(result)
+}
+
+/// Create a new event.
+///
+/// Inserts a new row into the `event` table with the given fields.
+/// Defaults: `priority = 0`, `is_active = true`.
+#[server(endpoint = "create_event")]
+pub async fn create_event(
+    title: String,
+    description: String,
+    event_date: String,
+    passcode: String,
+) -> Result<(), ServerFnError> {
+    let pool = server_only::get_pool().await?;
+
+    if title.trim().is_empty() {
+        return Err(ServerFnError::new("Event title cannot be empty"));
+    }
+    if passcode.trim().is_empty() {
+        return Err(ServerFnError::new("Event passcode cannot be empty"));
+    }
+
+    sqlx::query(
+        r#"
+        INSERT INTO event (title, description, event_date, priority, is_active, passcode)
+        VALUES ($1, $2, $3, $4, $5, $6)
+        "#,
+    )
+    .bind(title.trim())
+    .bind(description.trim())
+    .bind(event_date.trim())
+    .bind(0i32) // default priority
+    .bind(true) // active by default
+    .bind(passcode.trim())
+    .execute(&pool)
+    .await
+    .map_err(server_only::db_err)?;
+
+    log::info!("[create_event] New event created");
+    Ok(())
+}
+
+/// Update an existing event.
+///
+/// Updates title, description, event_date, is_active, and passcode for the
+/// event with the given id.
+#[server(endpoint = "update_event")]
+pub async fn update_event(
+    id: i64,
+    title: String,
+    description: String,
+    event_date: String,
+    is_active: bool,
+    passcode: String,
+) -> Result<(), ServerFnError> {
+    let pool = server_only::get_pool().await?;
+
+    if title.trim().is_empty() {
+        return Err(ServerFnError::new("Event title cannot be empty"));
+    }
+    if passcode.trim().is_empty() {
+        return Err(ServerFnError::new("Event passcode cannot be empty"));
+    }
+
+    let result = sqlx::query(
+        r#"
+        UPDATE event
+        SET title = $1, description = $2, event_date = $3, is_active = $4, passcode = $5
+        WHERE id = $6
+        "#,
+    )
+    .bind(title.trim())
+    .bind(description.trim())
+    .bind(event_date.trim())
+    .bind(is_active)
+    .bind(passcode.trim())
+    .bind(id)
+    .execute(&pool)
+    .await
+    .map_err(server_only::db_err)?;
+
+    if result.rows_affected() == 0 {
+        return Err(ServerFnError::new("Event not found"));
+    }
+
+    log::info!("[update_event] Updated event id={id}, active={is_active}");
     Ok(())
 }
 
@@ -851,4 +1070,85 @@ pub async fn verify_admin_passcode(passcode: String) -> Result<bool, ServerFnErr
     let expected =
         std::env::var("ADMIN_PASSCODE").unwrap_or_else(|_| "4ever-admin-2026".to_string());
     Ok(passcode.trim() == expected.trim())
+}
+
+/// Export all RSVP responses as a CSV string.
+///
+/// Joins `event_response` with `user_profile` to resolve nicknames, then
+/// parses the `answers` JSON to extract menu selections and text answers.
+/// Returns a UTF-8 CSV with columns: #, Nickname, Menu Orders, Total (฿), Submitted At.
+#[server(endpoint = "export_responses_csv")]
+pub async fn export_responses_csv() -> Result<String, ServerFnError> {
+    let pool = server_only::get_pool().await?;
+
+    let rows = sqlx::query(
+        "SELECT er.id, er.session_id, er.answers, er.submitted_at,
+                up.nickname
+         FROM event_response er
+         LEFT JOIN user_profile up ON er.session_id = up.session_id
+         ORDER BY er.submitted_at ASC",
+    )
+    .fetch_all(&pool)
+    .await
+    .map_err(server_only::db_err)?;
+
+    let mut csv = String::from("#,Nickname,Menu Orders,Total (฿),Submitted At\n");
+
+    for (i, row) in rows.iter().enumerate() {
+        let nickname: String = row.try_get("nickname").unwrap_or_else(|_| "Unknown".into());
+        let answers: String = row.try_get("answers").unwrap_or_default();
+        let submitted_at: chrono::DateTime<chrono::Utc> =
+            row.try_get("submitted_at").map_err(server_only::db_err)?;
+
+        // Parse answers JSON into question-id → answer map
+        let parsed: std::collections::HashMap<String, String> =
+            serde_json::from_str(&answers).unwrap_or_default();
+
+        let mut orders = String::new();
+        let mut total = 0i64;
+
+        for answer in parsed.values() {
+            // Try parsing as menu selections (JSON array of {name, price, qty})
+            if let Ok(selections) = serde_json::from_str::<Vec<serde_json::Value>>(answer) {
+                for sel in &selections {
+                    let name = sel.get("name").and_then(|v| v.as_str()).unwrap_or("");
+                    let qty = sel.get("qty").and_then(|v| v.as_i64()).unwrap_or(0);
+                    let price = sel.get("price").and_then(|v| v.as_i64()).unwrap_or(0);
+                    if qty > 0 {
+                        if !orders.is_empty() {
+                            orders.push_str("; ");
+                        }
+                        orders.push_str(&format!("{}x{}", name, qty));
+                        total += price * qty;
+                    }
+                }
+            } else {
+                // Regular text answer
+                if !orders.is_empty() {
+                    orders.push_str("; ");
+                }
+                orders.push_str(answer);
+            }
+        }
+
+        // CSV escape — wrap in quotes if the value contains commas, quotes, or newlines
+        let escape_csv = |s: &str| -> String {
+            if s.contains(',') || s.contains('"') || s.contains('\n') || s.contains('\r') {
+                format!("\"{}\"", s.replace('"', "\"\""))
+            } else {
+                s.to_string()
+            }
+        };
+
+        csv.push_str(&format!(
+            "{},{},{},{},{}\n",
+            i + 1,
+            escape_csv(&nickname),
+            escape_csv(&orders),
+            total,
+            submitted_at.format("%Y-%m-%d %H:%M:%S UTC"),
+        ));
+    }
+
+    Ok(csv)
 }

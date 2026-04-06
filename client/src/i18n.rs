@@ -269,6 +269,10 @@ pub struct Locale {
     pub admin_menu_inactive: &'static str,
     /// Total menu items count label
     pub admin_menu_total_items: &'static str,
+    /// Menu item category label
+    pub admin_menu_category_label: &'static str,
+    /// Menu item category placeholder
+    pub admin_menu_category_placeholder: &'static str,
 
     // ── Admin Authentication ───────────────────────────────────────────
     /// Admin auth dialog title
@@ -281,6 +285,48 @@ pub struct Locale {
     pub admin_auth_submit: &'static str,
     /// Admin auth error message
     pub admin_auth_error: &'static str,
+
+    // ── Delete Confirmation ───────────────────────────────────────────
+    /// Delete confirmation dialog title
+    pub admin_delete_confirm_title: &'static str,
+    /// Delete confirmation message (use '{name}' placeholder)
+    pub admin_delete_confirm_message: &'static str,
+    /// Delete confirmation button (destructive)
+    pub admin_delete_confirm_button: &'static str,
+    /// Delete confirmation cancel button
+    pub admin_delete_cancel_button: &'static str,
+
+    // ── Loading States ────────────────────────────────────────────────
+    /// Generic menu loading indicator text
+    pub admin_menu_loading: &'static str,
+
+    // ── CSV Export ────────────────────────────────────────────────────
+    /// Export CSV button label (includes emoji)
+    pub admin_export_csv: &'static str,
+    /// Export error message prefix
+    pub admin_export_error: &'static str,
+
+    // ── Event Management (Admin) ──────────────────────────────────────
+    /// Events tab label
+    pub admin_events_tab: &'static str,
+    /// Event management section title
+    pub admin_events_title: &'static str,
+    /// Create event button text
+    pub admin_events_add: &'static str,
+    /// Event title field label
+    pub admin_events_title_label: &'static str,
+    /// Event description field label
+    pub admin_events_desc_label: &'static str,
+    /// Event date field label
+    pub admin_events_date_label: &'static str,
+    /// Event passcode field label
+    pub admin_events_passcode_label: &'static str,
+    /// No events placeholder text
+    pub admin_events_no_events: &'static str,
+    /// Create new event form heading
+    pub admin_events_create_title: &'static str,
+    /// Event selector label (shown in EventView when multiple events)
+    pub admin_event_select_label: &'static str,
 }
 
 impl Locale {
@@ -434,6 +480,8 @@ pub fn get_locale(lang: Language) -> Locale {
             admin_menu_active: "พร้อมให้บริการ",
             admin_menu_inactive: "ไม่พร้อมให้บริการ",
             admin_menu_total_items: "เมนูทั้งหมด",
+            admin_menu_category_label: "หมวดหมู่",
+            admin_menu_category_placeholder: "เช่น Steaks, Drinks, Desserts",
 
             // Admin Authentication
             admin_auth_title: "เข้าถึงแผงควบคุม",
@@ -441,6 +489,31 @@ pub fn get_locale(lang: Language) -> Locale {
             admin_auth_passcode_placeholder: "รหัสผ่านแอดมิน",
             admin_auth_submit: "เข้าสู่ระบบ",
             admin_auth_error: "รหัสผ่านแอดมินไม่ถูกต้อง",
+
+            // Delete Confirmation
+            admin_delete_confirm_title: "ยืนยันการลบ",
+            admin_delete_confirm_message: "คุณแน่ใจหรือไม่ว่าต้องการลบ '{name}'?",
+            admin_delete_confirm_button: "ลบถาวร",
+            admin_delete_cancel_button: "ยกเลิก",
+
+            // Loading States
+            admin_menu_loading: "กำลังดำเนินการ...",
+
+            // CSV Export
+            admin_export_csv: "📥 ส่งออก CSV",
+            admin_export_error: "ส่งออกล้มเหลว",
+
+            // Event Management (Admin)
+            admin_events_tab: "กิจกรรม",
+            admin_events_title: "จัดการกิจกรรม",
+            admin_events_add: "+ สร้างกิจกรรม",
+            admin_events_title_label: "ชื่อกิจกรรม",
+            admin_events_desc_label: "รายละเอียด",
+            admin_events_date_label: "วันที่",
+            admin_events_passcode_label: "รหัสผ่านกิจกรรม",
+            admin_events_no_events: "ยังไม่มีกิจกรรม",
+            admin_events_create_title: "สร้างกิจกรรมใหม่",
+            admin_event_select_label: "เลือกกิจกรรม",
         },
 
         // ──────────────────────────────────────────────────────────────────
@@ -571,6 +644,8 @@ pub fn get_locale(lang: Language) -> Locale {
             admin_menu_active: "Available",
             admin_menu_inactive: "Unavailable",
             admin_menu_total_items: "Total Items",
+            admin_menu_category_label: "Category",
+            admin_menu_category_placeholder: "e.g. Steaks, Drinks, Desserts",
 
             // Admin Authentication
             admin_auth_title: "Admin Access",
@@ -578,6 +653,31 @@ pub fn get_locale(lang: Language) -> Locale {
             admin_auth_passcode_placeholder: "Admin passcode",
             admin_auth_submit: "Enter",
             admin_auth_error: "Invalid admin passcode",
+
+            // Delete Confirmation
+            admin_delete_confirm_title: "Confirm Delete",
+            admin_delete_confirm_message: "Are you sure you want to delete '{name}'?",
+            admin_delete_confirm_button: "Delete Permanently",
+            admin_delete_cancel_button: "Cancel",
+
+            // Loading States
+            admin_menu_loading: "Processing...",
+
+            // CSV Export
+            admin_export_csv: "📥 Export CSV",
+            admin_export_error: "Export failed",
+
+            // Event Management (Admin)
+            admin_events_tab: "Events",
+            admin_events_title: "Event Management",
+            admin_events_add: "+ Create Event",
+            admin_events_title_label: "Event Title",
+            admin_events_desc_label: "Description",
+            admin_events_date_label: "Date",
+            admin_events_passcode_label: "Event Passcode",
+            admin_events_no_events: "No events yet",
+            admin_events_create_title: "Create New Event",
+            admin_event_select_label: "Select Event",
         },
     }
 }

@@ -64,6 +64,10 @@ struct AppState {
     menu_items: SyncSignal<Vec<MenuItem>>,
     session_id: SyncSignal<String>,
     data_loaded: SyncSignal<bool>,
+    /// Tracks which event the user is currently viewing (selected via dropdown).
+    active_event_id: SyncSignal<Option<i32>>,
+    /// All active events loaded from the backend (for the event selector).
+    all_events: SyncSignal<Vec<EventWithQuestions>>,
 }
 
 // =============================================================================
@@ -141,9 +145,22 @@ async fn load_initial_data(mut state: AppState) {
     // Load active events
     match get_events().await {
         Ok(events) => {
-            if let Some(ewq) = events.first() {
+            state.all_events.set(events.clone());
+
+            // Determine which event to display:
+            //   - If the user previously selected one (active_event_id), use that.
+            //   - Otherwise fall back to the first active event.
+            let target_id = (state.active_event_id)();
+            let target = if let Some(id) = target_id {
+                events.iter().find(|e| e.event.id == id)
+            } else {
+                events.first()
+            };
+
+            if let Some(ewq) = target {
                 state.active_event.set(Some(ewq.event.clone()));
                 state.event_questions.set(ewq.questions.clone());
+                state.active_event_id.set(Some(ewq.event.id));
             }
         }
         Err(e) => {
@@ -194,6 +211,10 @@ async fn load_admin_data(mut state: AppState) -> Result<(), String> {
         Ok(items) => state.menu_items.set(items),
         Err(e) => return Err(format!("Failed to load menu: {e}")),
     }
+    match get_all_events().await {
+        Ok(events) => state.all_events.set(events),
+        Err(e) => return Err(format!("Failed to load events: {e}")),
+    }
     Ok(())
 }
 
@@ -215,6 +236,8 @@ fn App() -> Element {
         menu_items: use_signal_sync(Vec::new),
         session_id: use_signal_sync(String::new),
         data_loaded: use_signal_sync(|| false),
+        active_event_id: use_signal_sync(|| None),
+        all_events: use_signal_sync(Vec::new),
     };
 
     use_context_provider(|| state);
@@ -617,6 +640,7 @@ fn OnboardingView() -> Element {
 struct MenuOption {
     name: String,
     price: i64,
+    category: String,
 }
 
 /// A selected menu item with quantity, stored in the answer JSON.
@@ -652,6 +676,18 @@ fn MenuSelect(options_json: String, answers: Signal<Vec<String>>, index: usize) 
         .iter()
         .filter(|item| query.is_empty() || item.name.to_lowercase().contains(&query))
         .collect();
+
+    // Group by category (preserving order of first appearance)
+    let mut categories: Vec<(&str, Vec<&MenuOption>)> = Vec::new();
+    for item in &filtered {
+        if let Some(last) = categories.last_mut() {
+            if last.0 == item.category {
+                last.1.push(item);
+                continue;
+            }
+        }
+        categories.push((&item.category, vec![item]));
+    }
 
     // Calculate totals
     let total: i64 = selections().iter().map(|s| s.price * s.qty as i64).sum();
@@ -689,94 +725,105 @@ fn MenuSelect(options_json: String, answers: Signal<Vec<String>>, index: usize) 
             div {
                 class: "max-h-72 overflow-y-auto space-y-1.5 pr-1",
 
-                {filtered.iter().map(|item| {
-                    let item_name = item.name.clone();
-                    let item_name_dec = item_name.clone();
-                    let item_name_inc = item_name.clone();
-                    let item_price = item.price;
-                    let current = selections();
-                    let sel = current.iter().find(|s| s.name == item_name);
-                    let qty = sel.map(|s| s.qty).unwrap_or(0);
-                    let is_selected = qty > 0;
-
+                {categories.iter().map(|(cat_name, cat_items)| {
+                    let cat_key = cat_name.to_string();
                     rsx! {
                         div {
-                            key: "{item_name}",
-                            class: if is_selected {
-                                "flex items-center justify-between bg-indigo-500/15 border border-indigo-500/30 rounded-xl px-4 py-2.5 transition"
-                            } else {
-                                "flex items-center justify-between bg-white/[0.03] border border-white/5 rounded-xl px-4 py-2.5 hover:bg-white/[0.06] transition cursor-pointer"
-                            },
+                            key: "{cat_key}",
+                            // Category header
+                            p { class: "text-xs text-indigo-400 font-semibold uppercase tracking-wider mt-3 mb-1.5 px-1", "{cat_name}" }
+                            // Items in this category
+                            {cat_items.iter().map(|item| {
+                                let item_name = item.name.clone();
+                                let item_name_dec = item_name.clone();
+                                let item_name_inc = item_name.clone();
+                                let item_price = item.price;
+                                let current = selections();
+                                let sel = current.iter().find(|s| s.name == item_name);
+                                let qty = sel.map(|s| s.qty).unwrap_or(0);
+                                let is_selected = qty > 0;
 
-                            // Item info
-                            div {
-                                class: "flex-1 min-w-0 mr-3",
-                                p {
-                                    class: if is_selected {
-                                        "text-sm text-white font-medium truncate"
-                                    } else {
-                                        "text-sm text-slate-300 truncate"
-                                    },
-                                    "{item_name}"
-                                }
-                                if item_price > 0 {
-                                    p { class: "text-xs text-slate-500 mt-0.5", "{locale.menu_currency}{item_price}" }
-                                }
-                            }
+                                rsx! {
+                                    div {
+                                        key: "{item_name}",
+                                        class: if is_selected {
+                                            "flex items-center justify-between bg-indigo-500/15 border border-indigo-500/30 rounded-xl px-4 py-2.5 transition"
+                                        } else {
+                                            "flex items-center justify-between bg-white/[0.03] border border-white/5 rounded-xl px-4 py-2.5 hover:bg-white/[0.06] transition cursor-pointer"
+                                        },
 
-                            // Quantity controls
-                            div {
-                                class: "flex items-center gap-1.5 shrink-0",
+                                        // Item info
+                                        div {
+                                            class: "flex-1 min-w-0 mr-3",
+                                            p {
+                                                class: if is_selected {
+                                                    "text-sm text-white font-medium truncate"
+                                                } else {
+                                                    "text-sm text-slate-300 truncate"
+                                                },
+                                                "{item_name}"
+                                            }
+                                            if item_price > 0 {
+                                                p { class: "text-xs text-slate-500 mt-0.5", "{locale.menu_currency}{item_price}" }
+                                            }
+                                        }
 
-                                if is_selected {
-                                    // Decrease button
-                                    button {
-                                        class: "w-7 h-7 rounded-lg bg-white/10 text-white text-sm font-medium flex items-center justify-center hover:bg-white/20 cursor-pointer transition",
-                                        onclick: move |_| {
-                                            let name_for_remove = item_name_dec.clone();
-                                            let mut s = selections.write();
-                                            if let Some(sel) = s.iter_mut().find(|x| x.name == item_name_dec) {
-                                                sel.qty -= 1;
-                                                if sel.qty == 0 {
-                                                    s.retain(|x| x.name != name_for_remove);
+                                        // Quantity controls
+                                        div {
+                                            class: "flex items-center gap-1.5 shrink-0",
+
+                                            if is_selected {
+                                                // Decrease button
+                                                button {
+                                                    class: "w-7 h-7 rounded-lg bg-white/10 text-white text-sm font-medium flex items-center justify-center hover:bg-white/20 cursor-pointer transition",
+                                                    onclick: move |_| {
+                                                        let name_for_remove = item_name_dec.clone();
+                                                        let mut s = selections.write();
+                                                        if let Some(sel) = s.iter_mut().find(|x| x.name == item_name_dec) {
+                                                            sel.qty -= 1;
+                                                            if sel.qty == 0 {
+                                                                s.retain(|x| x.name != name_for_remove);
+                                                            }
+                                                        }
+                                                        let json = serde_json::to_string(&*s).unwrap_or_default();
+                                                        drop(s);
+                                                        let mut a = answers.write();
+                                                        if a.len() > index { a[index] = json; }
+                                                    },
+                                                    "−"
+                                                }
+                                                // Quantity display
+                                                span {
+                                                    class: "text-sm text-white font-semibold w-7 text-center",
+                                                    "{qty}"
                                                 }
                                             }
-                                            let json = serde_json::to_string(&*s).unwrap_or_default();
-                                            drop(s);
-                                            let mut a = answers.write();
-                                            if a.len() > index { a[index] = json; }
-                                        },
-                                        "−"
-                                    }
-                                    // Quantity display
-                                    span {
-                                        class: "text-sm text-white font-semibold w-7 text-center",
-                                        "{qty}"
-                                    }
-                                }
 
-                                // Increase button
-                                button {
-                                    class: "w-7 h-7 rounded-lg bg-indigo-500/30 text-indigo-300 text-sm font-bold flex items-center justify-center hover:bg-indigo-500/50 cursor-pointer transition",
-                                    onclick: move |_| {
-                                        let mut s = selections.write();
-                                        if let Some(sel) = s.iter_mut().find(|x| x.name == item_name_inc) {
-                                            sel.qty += 1;
-                                        } else {
-                                            s.push(MenuSelection {
-                                                name: item_name_inc.clone(),
-                                                price: item_price,
-                                                qty: 1,
-                                            });
+                                            // Increase button
+                                            button {
+                                                class: "w-7 h-7 rounded-lg bg-indigo-500/30 text-indigo-300 text-sm font-bold flex items-center justify-center hover:bg-indigo-500/50 cursor-pointer transition",
+                                                onclick: move |_| {
+                                                    let mut s = selections.write();
+                                                    if let Some(sel) = s.iter_mut().find(|x| x.name == item_name_inc) {
+                                                        sel.qty += 1;
+                                                    } else {
+                                                        s.push(MenuSelection {
+                                                            name: item_name_inc.clone(),
+                                                            price: item_price,
+                                                            qty: 1,
+                                                        });
+                                                    }
+                                                    let json = serde_json::to_string(&*s).unwrap_or_default();
+                                                    drop(s);
+                                                    let mut a = answers.write();
+                                                    if a.len() > index { a[index] = json; }
+                                                },
+                                                "+"
+                                            }
                                         }
-                                        let json = serde_json::to_string(&*s).unwrap_or_default();
-                                        drop(s);
-                                        let mut a = answers.write();
-                                        if a.len() > index { a[index] = json; }
-                                    },
-                                    "+"
+                                    }
                                 }
-                            }
+                            })}
                         }
                     }
                 })}
@@ -927,6 +974,51 @@ fn EventView() -> Element {
     rsx! {
         div {
             class: "space-y-5",
+
+            // ── Event Selector (multi-event) ───────────────────────
+            {
+                let all_events = (state.all_events)();
+                if all_events.len() > 1 {
+                    let current_id = event_data.id;
+                    rsx! {
+                        div {
+                            class: "mb-2",
+                            label {
+                                class: "block text-xs text-slate-500 mb-1.5 font-medium",
+                                "{locale.admin_event_select_label}"
+                            }
+                            select {
+                                class: "w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-white focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition appearance-none cursor-pointer",
+                                onchange: move |e| {
+                                    if let Ok(id) = e.value().parse::<i32>() {
+                                        state.active_event_id.set(Some(id));
+                                        let events = (state.all_events)();
+                                        if let Some(ewq) = events.iter().find(|ev| ev.event.id == id) {
+                                            state.active_event.set(Some(ewq.event.clone()));
+                                            state.event_questions.set(ewq.questions.clone());
+                                            answers.set(ewq.questions.iter().map(|_| String::new()).collect());
+                                        }
+                                    }
+                                },
+                                {all_events.iter().map(|ewq| {
+                                    let eid = ewq.event.id;
+                                    let selected = eid == current_id;
+                                    rsx! {
+                                        option {
+                                            key: "event_{eid}",
+                                            value: "{eid}",
+                                            selected: selected,
+                                            "{ewq.event.title}"
+                                        }
+                                    }
+                                })}
+                            }
+                        }
+                    }
+                } else {
+                    rsx! {}
+                }
+            }
 
             // ── Welcome Bar ─────────────────────────────────────────
             {profile.map(|p| rsx! {
@@ -1410,16 +1502,38 @@ fn AdminView() -> Element {
     let responses = (state.all_responses)();
     let questions = (state.event_questions)();
     let menu_items = (state.menu_items)();
+    let all_events = (state.all_events)();
     let menu_items_len = menu_items.len();
     let active_menu_count = menu_items.iter().filter(|m| m.is_active).count();
 
     let mut active_tab = use_signal(|| 0u8);
     let mut new_menu_name = use_signal(String::new);
     let mut new_menu_price = use_signal(String::new);
+    let mut new_menu_category = use_signal(|| "Steaks".to_string());
     let mut editing_id = use_signal(|| None::<i32>);
     let mut edit_menu_name = use_signal(String::new);
     let mut edit_menu_price = use_signal(String::new);
+    let mut edit_menu_category = use_signal(String::new);
     let mut editing_is_active = use_signal(|| true);
+
+    // Event management signals
+    let mut new_event_title = use_signal(String::new);
+    let mut new_event_desc = use_signal(String::new);
+    let mut new_event_date = use_signal(String::new);
+    let mut new_event_passcode = use_signal(String::new);
+    let mut editing_event_id = use_signal(|| None::<i32>);
+    let mut edit_event_title = use_signal(String::new);
+    let mut edit_event_desc = use_signal(String::new);
+    let mut edit_event_date = use_signal(String::new);
+    let mut edit_event_is_active = use_signal(|| true);
+    let mut edit_event_passcode = use_signal(String::new);
+
+    // Loading & confirmation signals
+    let mut menu_loading = use_signal(String::new);
+    let mut delete_confirm_id = use_signal(|| None::<i32>);
+    let mut delete_confirm_name = use_signal(String::new);
+    let mut delete_confirm_response_id = use_signal(|| None::<i64>);
+    let mut delete_confirm_response_name = use_signal(String::new);
 
     let total_users = users.len();
     let total_responses = responses.len();
@@ -1502,6 +1616,20 @@ fn AdminView() -> Element {
                     },
                     onclick: move |_| active_tab.set(2),
                     "🍽 {locale.admin_menu_tab} ({menu_items_len})"
+                }
+                {
+                    let events_count = all_events.len();
+                    rsx! {
+                        button {
+                            class: if active_tab() == 3 {
+                                "px-4 py-2 rounded-xl font-medium bg-purple-500/20 text-purple-300 border border-purple-500/30 cursor-pointer transition"
+                            } else {
+                                "px-4 py-2 rounded-xl font-medium bg-white/5 text-slate-400 border border-white/10 hover:bg-white/10 cursor-pointer transition"
+                            },
+                            onclick: move |_| active_tab.set(3),
+                            "📅 {locale.admin_events_tab} ({events_count})"
+                        }
+                    }
                 }
             }
 
@@ -1599,6 +1727,19 @@ fn AdminView() -> Element {
                         p { "{locale.admin_no_responses}" }
                     }
                 } else {
+                    // Export CSV button
+                    div {
+                        class: "flex justify-end mb-3",
+                        button {
+                            class: "inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-emerald-500/15 text-emerald-400 border border-emerald-500/20 hover:bg-emerald-500/25 text-sm font-medium cursor-pointer transition",
+                            onclick: move |_| {
+                                let state = state;
+                                spawn(download_csv_export(state));
+                            },
+                            "{locale.admin_export_csv}"
+                        }
+                    }
+
                     div {
                         class: "bg-white/[0.03] border border-white/10 rounded-xl overflow-hidden",
                         div {
@@ -1647,11 +1788,8 @@ fn AdminView() -> Element {
                                                     button {
                                                         class: "text-xs px-3 py-1.5 rounded-lg bg-red-500/15 text-red-400 hover:bg-red-500/25 border border-red-500/20 cursor-pointer transition font-medium",
                                                         onclick: move |_| {
-                                                            spawn(async move {
-                                                                let _ = delete_event_response(response_id as i64).await;
-                                                                log::info!("delete_event_response called for id={response_id}");
-                                                                let _ = load_admin_data(state).await;
-                                                            });
+                                                            delete_confirm_response_id.set(Some(response_id as i64));
+                                                            delete_confirm_response_name.set(responder_name.clone());
                                                         },
                                                         "{locale.admin_delete_response}"
                                                     }
@@ -1664,14 +1802,29 @@ fn AdminView() -> Element {
                         }
                     }
                 }
-            } else {
+            } else if active_tab() == 2 {
                 // ── Menu Management Tab ──────────────────────────────
 
-                // Section title
-                h3 {
-                    class: "text-lg font-semibold text-white flex items-center gap-2",
-                    span { "🍽" }
-                    "{locale.admin_menu_title}"
+                // Section title with loading indicator
+                div {
+                    class: "flex items-center justify-between",
+                    h3 {
+                        class: "text-lg font-semibold text-white flex items-center gap-2",
+                        span { "🍽" }
+                        "{locale.admin_menu_title}"
+                    }
+                    if !menu_loading().is_empty() {
+                        div {
+                            class: "flex items-center gap-2",
+                            div {
+                                class: "w-4 h-4 border-2 border-indigo-500/30 border-t-indigo-400 rounded-full animate-spin",
+                            }
+                            span {
+                                class: "text-xs text-indigo-400 font-medium animate-pulse",
+                                "{menu_loading()}"
+                            }
+                        }
+                    }
                 }
 
                 // Stats row
@@ -1723,16 +1876,32 @@ fn AdminView() -> Element {
                                 oninput: move |e| new_menu_price.set(e.value()),
                             }
                         }
+                        div {
+                            class: "w-36",
+                            label { class: "block text-xs text-slate-500 mb-1", "{locale.admin_menu_category_label}" }
+                            input {
+                                class: "w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-white text-sm placeholder-slate-600 focus:outline-none focus:ring-2 focus:ring-indigo-500 transition",
+                                r#type: "text",
+                                placeholder: "{locale.admin_menu_category_placeholder}",
+                                value: "{new_menu_category}",
+                                oninput: move |e| new_menu_category.set(e.value()),
+                            }
+                        }
                         button {
                             class: "px-4 py-2 rounded-lg bg-indigo-500 hover:bg-indigo-600 text-white text-sm font-medium cursor-pointer transition shrink-0",
                             onclick: move |_| {
                                 let name = new_menu_name.read().clone();
                                 let price = new_menu_price.read().parse::<i64>().unwrap_or(0);
+                                let category = new_menu_category.read().clone();
                                 if name.trim().is_empty() { return; }
+                                let cat = if category.trim().is_empty() { "Steaks".to_string() } else { category };
+                                menu_loading.set(locale.admin_menu_loading.to_string());
                                 spawn(async move {
-                                    let _ = add_menu_item(name, price).await;
+                                    let _ = add_menu_item(name, price, cat).await;
                                     new_menu_name.set(String::new());
                                     new_menu_price.set(String::new());
+                                    new_menu_category.set("Steaks".to_string());
+                                    menu_loading.set(String::new());
                                     let _ = load_admin_data(state).await;
                                 });
                             },
@@ -1754,7 +1923,10 @@ fn AdminView() -> Element {
                             let item_id = item.id;
                             let item_name = item.name.clone();
                             let name_for_toggle = item.name.clone();
+                            let name_for_delete = item.name.clone();
                             let item_price = item.price;
+                            let item_category = item.category.clone();
+                            let category_for_toggle = item.category.clone();
                             let is_active = item.is_active;
                             let is_editing = editing_id() == Some(item.id);
 
@@ -1783,16 +1955,27 @@ fn AdminView() -> Element {
                                                 value: "{edit_menu_price}",
                                                 oninput: move |e| edit_menu_price.set(e.value()),
                                             }
+                                            input {
+                                                class: "w-32 bg-white/5 border border-white/10 rounded-lg px-3 py-1.5 text-white text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 transition",
+                                                r#type: "text",
+                                                placeholder: "{locale.admin_menu_category_placeholder}",
+                                                value: "{edit_menu_category}",
+                                                oninput: move |e| edit_menu_category.set(e.value()),
+                                            }
                                             button {
                                                 class: "px-3 py-1.5 rounded-lg bg-emerald-500/20 text-emerald-400 text-xs font-medium cursor-pointer hover:bg-emerald-500/30 transition",
                                                 onclick: move |_| {
                                                     let name = edit_menu_name.read().clone();
                                                     let price = edit_menu_price.read().parse::<i64>().unwrap_or(0);
+                                                    let category = edit_menu_category.read().clone();
                                                     let active = editing_is_active();
                                                     if name.trim().is_empty() { return; }
+                                                    let cat = if category.trim().is_empty() { "Steaks".to_string() } else { category };
+                                                    menu_loading.set(locale.admin_menu_loading.to_string());
                                                     spawn(async move {
-                                                        let _ = update_menu_item(item_id as i64, name, price, active).await;
+                                                        let _ = update_menu_item(item_id as i64, name, price, active, cat).await;
                                                         editing_id.set(None);
+                                                        menu_loading.set(String::new());
                                                         let _ = load_admin_data(state).await;
                                                     });
                                                 },
@@ -1812,13 +1995,20 @@ fn AdminView() -> Element {
                                             // Item info
                                             div {
                                                 class: "flex-1 min-w-0",
-                                                p {
-                                                    class: if is_active {
-                                                        "text-sm text-white font-medium truncate"
-                                                    } else {
-                                                        "text-sm text-slate-500 line-through truncate"
-                                                    },
-                                                    "{item.name}"
+                                                div {
+                                                    class: "flex items-center gap-2",
+                                                    p {
+                                                        class: if is_active {
+                                                            "text-sm text-white font-medium truncate"
+                                                        } else {
+                                                            "text-sm text-slate-500 line-through truncate"
+                                                        },
+                                                        "{item.name}"
+                                                    }
+                                                    span {
+                                                        class: "text-[10px] px-1.5 py-0.5 rounded bg-indigo-500/15 text-indigo-400 font-medium shrink-0",
+                                                        "{item.category}"
+                                                    }
                                                 }
                                                 p { class: "text-xs text-slate-500 mt-0.5", "฿{item.price}" }
                                             }
@@ -1836,8 +2026,11 @@ fn AdminView() -> Element {
                                                     },
                                                     onclick: move |_| {
                                                         let name = name_for_toggle.clone();
+                                                        let cat = category_for_toggle.clone();
+                                                        menu_loading.set(locale.admin_menu_loading.to_string());
                                                         spawn(async move {
-                                                            let _ = update_menu_item(item_id as i64, name, item_price, !is_active).await;
+                                                            let _ = update_menu_item(item_id as i64, name, item_price, !is_active, cat).await;
+                                                            menu_loading.set(String::new());
                                                             let _ = load_admin_data(state).await;
                                                         });
                                                     },
@@ -1850,6 +2043,7 @@ fn AdminView() -> Element {
                                                     onclick: move |_| {
                                                         edit_menu_name.set(item_name.clone());
                                                         edit_menu_price.set(item_price.to_string());
+                                                        edit_menu_category.set(item_category.clone());
                                                         editing_is_active.set(is_active);
                                                         editing_id.set(Some(item_id));
                                                     },
@@ -1860,10 +2054,8 @@ fn AdminView() -> Element {
                                                 button {
                                                     class: "text-xs px-2.5 py-1 rounded-lg bg-red-500/15 text-red-400 border border-red-500/20 cursor-pointer transition font-medium",
                                                     onclick: move |_| {
-                                                        spawn(async move {
-                                                            let _ = delete_menu_item(item_id as i64).await;
-                                                            let _ = load_admin_data(state).await;
-                                                        });
+                                                        delete_confirm_id.set(Some(item_id));
+                                                        delete_confirm_name.set(name_for_delete.clone());
                                                     },
                                                     "{locale.admin_menu_delete}"
                                                 }
@@ -1875,6 +2067,385 @@ fn AdminView() -> Element {
                         })}
                     }
                 }
+            } else {
+                // ── Events Management Tab ──────────────────────────────
+
+                // Section title
+                div {
+                    class: "flex items-center justify-between",
+                    h3 {
+                        class: "text-lg font-semibold text-white flex items-center gap-2",
+                        span { "📅" }
+                        "{locale.admin_events_title}"
+                    }
+                    if !menu_loading().is_empty() {
+                        div {
+                            class: "flex items-center gap-2",
+                            div {
+                                class: "w-4 h-4 border-2 border-indigo-500/30 border-t-indigo-400 rounded-full animate-spin",
+                            }
+                            span {
+                                class: "text-xs text-indigo-400 font-medium animate-pulse",
+                                "{menu_loading()}"
+                            }
+                        }
+                    }
+                }
+
+                // Create new event form
+                div {
+                    class: "bg-white/[0.04] border border-dashed border-white/20 rounded-xl p-4",
+
+                    div {
+                        class: "flex items-center gap-2 mb-3",
+                        span { class: "text-base", "➕" }
+                        p { class: "text-sm text-slate-400 font-medium", "{locale.admin_events_create_title}" }
+                    }
+                    div {
+                        class: "space-y-3",
+                        div {
+                            class: "flex gap-3 flex-wrap items-end",
+                            div {
+                                class: "flex-1 min-w-[180px]",
+                                label { class: "block text-xs text-slate-500 mb-1", "{locale.admin_events_title_label}" }
+                                input {
+                                    class: "w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-white text-sm placeholder-slate-600 focus:outline-none focus:ring-2 focus:ring-indigo-500 transition",
+                                    r#type: "text",
+                                    placeholder: "{locale.admin_events_title_label}",
+                                    value: "{new_event_title}",
+                                    oninput: move |e| new_event_title.set(e.value()),
+                                }
+                            }
+                            div {
+                                class: "w-36",
+                                label { class: "block text-xs text-slate-500 mb-1", "{locale.admin_events_date_label}" }
+                                input {
+                                    class: "w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-white text-sm placeholder-slate-600 focus:outline-none focus:ring-2 focus:ring-indigo-500 transition",
+                                    r#type: "text",
+                                    placeholder: "dd-mm-yyyy",
+                                    value: "{new_event_date}",
+                                    oninput: move |e| new_event_date.set(e.value()),
+                                }
+                            }
+                        }
+                        div {
+                            class: "flex gap-3 flex-wrap items-end",
+                            div {
+                                class: "flex-1 min-w-[180px]",
+                                label { class: "block text-xs text-slate-500 mb-1", "{locale.admin_events_desc_label}" }
+                                input {
+                                    class: "w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-white text-sm placeholder-slate-600 focus:outline-none focus:ring-2 focus:ring-indigo-500 transition",
+                                    r#type: "text",
+                                    placeholder: "{locale.admin_events_desc_label}",
+                                    value: "{new_event_desc}",
+                                    oninput: move |e| new_event_desc.set(e.value()),
+                                }
+                            }
+                            div {
+                                class: "w-36",
+                                label { class: "block text-xs text-slate-500 mb-1", "{locale.admin_events_passcode_label}" }
+                                input {
+                                    class: "w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-white text-sm placeholder-slate-600 focus:outline-none focus:ring-2 focus:ring-indigo-500 transition",
+                                    r#type: "text",
+                                    placeholder: "{locale.admin_events_passcode_label}",
+                                    value: "{new_event_passcode}",
+                                    oninput: move |e| new_event_passcode.set(e.value()),
+                                }
+                            }
+                            button {
+                                class: "px-4 py-2 rounded-lg bg-purple-500 hover:bg-purple-600 text-white text-sm font-medium cursor-pointer transition shrink-0",
+                                onclick: move |_| {
+                                    let title = new_event_title.read().clone();
+                                    let desc = new_event_desc.read().clone();
+                                    let date = new_event_date.read().clone();
+                                    let pc = new_event_passcode.read().clone();
+                                    if title.trim().is_empty() { return; }
+                                    menu_loading.set(locale.admin_menu_loading.to_string());
+                                    spawn(async move {
+                                        let _ = create_event(title, desc, date, pc).await;
+                                        new_event_title.set(String::new());
+                                        new_event_desc.set(String::new());
+                                        new_event_date.set(String::new());
+                                        new_event_passcode.set(String::new());
+                                        menu_loading.set(String::new());
+                                        let _ = load_admin_data(state).await;
+                                    });
+                                },
+                                "{locale.admin_events_add}"
+                            }
+                        }
+                    }
+                }
+
+                // Events list
+                if all_events.is_empty() {
+                    div {
+                        class: "text-center py-16 text-slate-500",
+                        p { "{locale.admin_events_no_events}" }
+                    }
+                } else {
+                    div {
+                        class: "space-y-2",
+                        {all_events.iter().map(|ewq| {
+                            let evt = &ewq.event;
+                            let event_id = evt.id;
+                            let event_title = evt.title.clone();
+                            let event_desc = evt.description.clone();
+                            let event_date = evt.event_date.clone();
+                            let event_passcode = evt.passcode.clone();
+                            let title_for_toggle = evt.title.clone();
+                            let desc_for_toggle = evt.description.clone();
+                            let date_for_toggle = evt.event_date.clone();
+                            let passcode_for_toggle = evt.passcode.clone();
+                            let is_active = evt.is_active;
+                            let is_editing = editing_event_id() == Some(evt.id);
+
+                            rsx! {
+                                div {
+                                    key: "event_{event_id}",
+                                    class: if is_editing {
+                                        "bg-purple-500/10 border border-purple-500/30 rounded-xl px-4 py-3"
+                                    } else {
+                                        "bg-white/[0.03] border border-white/5 rounded-xl px-4 py-3 hover:bg-white/[0.06] transition"
+                                    },
+
+                                    if is_editing {
+                                        // ── Edit mode ─────────────────────
+                                        div {
+                                            class: "space-y-3",
+                                            div {
+                                                class: "flex items-center gap-3 flex-wrap",
+                                                input {
+                                                    class: "flex-1 min-w-[140px] bg-white/5 border border-white/10 rounded-lg px-3 py-1.5 text-white text-sm focus:outline-none focus:ring-2 focus:ring-purple-500 transition",
+                                                    r#type: "text",
+                                                    value: "{edit_event_title}",
+                                                    oninput: move |e| edit_event_title.set(e.value()),
+                                                }
+                                                input {
+                                                    class: "w-32 bg-white/5 border border-white/10 rounded-lg px-3 py-1.5 text-white text-sm focus:outline-none focus:ring-2 focus:ring-purple-500 transition",
+                                                    r#type: "text",
+                                                    placeholder: "dd-mm-yyyy",
+                                                    value: "{edit_event_date}",
+                                                    oninput: move |e| edit_event_date.set(e.value()),
+                                                }
+                                            }
+                                            div {
+                                                class: "flex items-center gap-3 flex-wrap",
+                                                input {
+                                                    class: "flex-1 min-w-[140px] bg-white/5 border border-white/10 rounded-lg px-3 py-1.5 text-white text-sm focus:outline-none focus:ring-2 focus:ring-purple-500 transition",
+                                                    r#type: "text",
+                                                    value: "{edit_event_desc}",
+                                                    oninput: move |e| edit_event_desc.set(e.value()),
+                                                }
+                                                input {
+                                                    class: "w-40 bg-white/5 border border-white/10 rounded-lg px-3 py-1.5 text-white text-sm focus:outline-none focus:ring-2 focus:ring-purple-500 transition",
+                                                    r#type: "text",
+                                                    value: "{edit_event_passcode}",
+                                                    oninput: move |e| edit_event_passcode.set(e.value()),
+                                                }
+                                            }
+                                            div {
+                                                class: "flex items-center gap-2",
+                                                button {
+                                                    class: "px-3 py-1.5 rounded-lg bg-emerald-500/20 text-emerald-400 text-xs font-medium cursor-pointer hover:bg-emerald-500/30 transition",
+                                                    onclick: move |_| {
+                                                        let title = edit_event_title.read().clone();
+                                                        let desc = edit_event_desc.read().clone();
+                                                        let date = edit_event_date.read().clone();
+                                                        let active = edit_event_is_active();
+                                                        let pc = edit_event_passcode.read().clone();
+                                                        if title.trim().is_empty() { return; }
+                                                        menu_loading.set(locale.admin_menu_loading.to_string());
+                                                        spawn(async move {
+                                                            let _ = update_event(event_id as i64, title, desc, date, active, pc).await;
+                                                            editing_event_id.set(None);
+                                                            menu_loading.set(String::new());
+                                                            let _ = load_admin_data(state).await;
+                                                        });
+                                                    },
+                                                    "{locale.admin_menu_save}"
+                                                }
+                                                button {
+                                                    class: "px-3 py-1.5 rounded-lg bg-white/10 text-slate-400 text-xs font-medium cursor-pointer hover:bg-white/20 transition",
+                                                    onclick: move |_| editing_event_id.set(None),
+                                                    "{locale.admin_menu_cancel}"
+                                                }
+                                            }
+                                        }
+                                    } else {
+                                        // ── Display mode ──────────────────
+                                        div {
+                                            class: "flex items-center justify-between gap-3",
+
+                                            // Event info
+                                            div {
+                                                class: "flex-1 min-w-0",
+                                                div {
+                                                    class: "flex items-center gap-2",
+                                                    p {
+                                                        class: if is_active {
+                                                            "text-sm text-white font-medium truncate"
+                                                        } else {
+                                                            "text-sm text-slate-500 line-through truncate"
+                                                        },
+                                                        "{evt.title}"
+                                                    }
+                                                    if is_active {
+                                                        span {
+                                                            class: "text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-400 font-medium shrink-0",
+                                                            "{locale.admin_menu_active}"
+                                                        }
+                                                    } else {
+                                                        span {
+                                                            class: "text-[10px] px-1.5 py-0.5 rounded bg-slate-500/15 text-slate-400 font-medium shrink-0",
+                                                            "{locale.admin_menu_inactive}"
+                                                        }
+                                                    }
+                                                }
+                                                p { class: "text-xs text-slate-500 mt-0.5", "📅 {evt.event_date}" }
+                                            }
+
+                                            // Action buttons
+                                            div {
+                                                class: "flex items-center gap-2 shrink-0",
+
+                                                // Active / Inactive toggle
+                                                button {
+                                                    class: if is_active {
+                                                        "text-xs px-2.5 py-1 rounded-lg bg-emerald-500/15 text-emerald-400 border border-emerald-500/20 cursor-pointer transition font-medium"
+                                                    } else {
+                                                        "text-xs px-2.5 py-1 rounded-lg bg-slate-500/15 text-slate-400 border border-slate-500/20 cursor-pointer transition font-medium"
+                                                    },
+                                                    onclick: move |_| {
+                                                        let t = title_for_toggle.clone();
+                                                        let d = desc_for_toggle.clone();
+                                                        let dt = date_for_toggle.clone();
+                                                        let pc = passcode_for_toggle.clone();
+                                                        menu_loading.set(locale.admin_menu_loading.to_string());
+                                                        spawn(async move {
+                                                            let _ = update_event(event_id as i64, t, d, dt, !is_active, pc).await;
+                                                            menu_loading.set(String::new());
+                                                            let _ = load_admin_data(state).await;
+                                                        });
+                                                    },
+                                                    if is_active { "{locale.admin_menu_active}" } else { "{locale.admin_menu_inactive}" }
+                                                }
+
+                                                // Edit button
+                                                button {
+                                                    class: "text-xs px-2.5 py-1 rounded-lg bg-purple-500/15 text-purple-400 border border-purple-500/20 cursor-pointer transition font-medium",
+                                                    onclick: move |_| {
+                                                        edit_event_title.set(event_title.clone());
+                                                        edit_event_desc.set(event_desc.clone());
+                                                        edit_event_date.set(event_date.clone());
+                                                        edit_event_is_active.set(is_active);
+                                                        edit_event_passcode.set(event_passcode.clone());
+                                                        editing_event_id.set(Some(event_id));
+                                                    },
+                                                    "{locale.admin_menu_edit}"
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        })}
+                    }
+                }
+            }
+
+            // ── Delete Confirmation Modal ─────────────────────────────────
+            if delete_confirm_id().is_some() || delete_confirm_response_id().is_some() {
+                {
+                    let confirm_name = if delete_confirm_id().is_some() {
+                        delete_confirm_name()
+                    } else {
+                        delete_confirm_response_name()
+                    };
+                    let confirm_message = locale.admin_delete_confirm_message.replace("{name}", &confirm_name);
+
+                    rsx! {
+                        div {
+                            class: "fixed inset-0 z-50 flex items-center justify-center",
+
+                            // Backdrop
+                            div {
+                                class: "absolute inset-0 bg-black/60 backdrop-blur-sm",
+                                onclick: move |_| {
+                                    delete_confirm_id.set(None);
+                                    delete_confirm_name.set(String::new());
+                                    delete_confirm_response_id.set(None);
+                                    delete_confirm_response_name.set(String::new());
+                                },
+                            }
+
+                            // Modal card
+                            div {
+                                class: "relative bg-slate-900 border border-white/10 rounded-2xl p-6 max-w-md w-full mx-4 shadow-2xl",
+
+                                // Warning icon and title
+                                div {
+                                    class: "flex items-center gap-3 mb-4",
+                                    span { class: "text-3xl", "⚠️" }
+                                    h3 {
+                                        class: "text-lg font-semibold text-white",
+                                        "{locale.admin_delete_confirm_title}"
+                                    }
+                                }
+
+                                // Message
+                                p {
+                                    class: "text-sm text-slate-300 mb-6",
+                                    "{confirm_message}"
+                                }
+
+                                // Buttons
+                                div {
+                                    class: "flex gap-3 justify-end",
+
+                                    // Cancel
+                                    button {
+                                        class: "px-4 py-2 rounded-lg bg-white/10 text-slate-300 text-sm font-medium cursor-pointer hover:bg-white/20 transition border border-white/10",
+                                        onclick: move |_| {
+                                            delete_confirm_id.set(None);
+                                            delete_confirm_name.set(String::new());
+                                            delete_confirm_response_id.set(None);
+                                            delete_confirm_response_name.set(String::new());
+                                        },
+                                        "{locale.admin_delete_cancel_button}"
+                                    }
+
+                                    // Confirm delete
+                                    button {
+                                        class: "px-4 py-2 rounded-lg bg-red-600 hover:bg-red-700 text-white text-sm font-medium cursor-pointer transition",
+                                        onclick: move |_| {
+                                            let menu_id = delete_confirm_id();
+                                            let resp_id = delete_confirm_response_id();
+                                            let loading_text = locale.admin_menu_loading;
+                                            spawn(async move {
+                                                if let Some(id) = menu_id {
+                                                    menu_loading.set(loading_text.to_string());
+                                                    let _ = delete_menu_item(id as i64).await;
+                                                    menu_loading.set(String::new());
+                                                }
+                                                if let Some(id) = resp_id {
+                                                    let _ = delete_event_response(id).await;
+                                                    log::info!("delete_event_response called for id={id}");
+                                                }
+                                                delete_confirm_id.set(None);
+                                                delete_confirm_name.set(String::new());
+                                                delete_confirm_response_id.set(None);
+                                                delete_confirm_response_name.set(String::new());
+                                                let _ = load_admin_data(state).await;
+                                            });
+                                        },
+                                        "{locale.admin_delete_confirm_button}"
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
             }
         }
     }
@@ -1883,6 +2454,41 @@ fn AdminView() -> Element {
 // =============================================================================
 // HELPER: Format answers JSON into readable text
 // =============================================================================
+
+/// Fetch CSV export from the server and trigger a browser download via JS eval.
+///
+/// Uses `serde_json::to_string` to produce a properly-escaped JSON string
+/// literal (with surrounding quotes) that doubles as a valid JS string,
+/// avoiding any quoting issues when embedding CSV data in JavaScript.
+async fn download_csv_export(mut state: AppState) {
+    match export_responses_csv().await {
+        Ok(csv) => {
+            let csv_json = serde_json::to_string(&csv).unwrap_or_default();
+            let js = format!(
+                r#"(function() {{
+                    var csv = {csv_json};
+                    var blob = new Blob([csv], {{type:'text/csv;charset=utf-8;'}});
+                    var url = URL.createObjectURL(blob);
+                    var a = document.createElement('a');
+                    a.href = url;
+                    a.download = 'rsvp_orders.csv';
+                    document.body.appendChild(a);
+                    a.click();
+                    document.body.removeChild(a);
+                    URL.revokeObjectURL(url);
+                }})()"#
+            );
+            let _ = dioxus::document::eval(&js).await;
+        }
+        Err(e) => {
+            log::error!("CSV export failed: {e}");
+            let locale = get_locale((state.language)());
+            state
+                .error_message
+                .set(Some(format!("{}: {e}", locale.admin_export_error)));
+        }
+    }
+}
 
 fn format_answers(answers_json: &str, questions: &[EventQuestion]) -> String {
     let parsed: HashMap<String, String> = serde_json::from_str(answers_json).unwrap_or_default();
