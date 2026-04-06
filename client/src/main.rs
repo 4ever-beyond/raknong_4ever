@@ -31,9 +31,9 @@ const TAILWIND_CSS: Asset = asset!("/assets/tailwind.css");
 const INSTAGRAM_URL: &str = "https://www.instagram.com/raknong_4ever";
 const MENU_URL: &str = "https://linktr.ee/steakdekuanwattana";
 
-/// Admin dashboard passcode. Change this to your own secret value.
-/// In production, this should come from an environment variable.
-const ADMIN_PASSCODE: &str = "4ever-admin-2026";
+/// Admin passcode is now verified server-side via the `verify_admin_passcode`
+/// server function, which reads the `ADMIN_PASSCODE` environment variable
+/// (falls back to "4ever-admin-2026" if unset).
 
 // =============================================================================
 // VIEW STATE
@@ -812,6 +812,7 @@ fn MenuSelect(options_json: String, answers: Signal<Vec<String>>, index: usize) 
 // EVENT VIEW
 // =============================================================================
 
+#[allow(non_snake_case)]
 fn EventView() -> Element {
     let mut state: AppState = use_context();
     let locale = get_locale((state.language)());
@@ -1364,25 +1365,28 @@ fn AdminAuthView() -> Element {
                             class: "w-full bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 active:from-amber-700 active:to-orange-700 text-white font-semibold py-3 rounded-xl shadow-lg shadow-amber-500/25 transition-all duration-200 transform hover:scale-[1.01] active:scale-[0.99] cursor-pointer",
                             onclick: move |_| {
                                 let pc = admin_passcode.read().clone();
-                                if pc.trim() == ADMIN_PASSCODE {
-                                    auth_error.set(false);
-                                    let mut state = state;
-                                    spawn(async move {
-                                        match load_admin_data(state).await {
-                                            Ok(()) => {
-                                                log::info!("Admin data loaded successfully");
-                                                state.view_state.set(ViewState::Admin);
-                                            }
-                                            Err(e) => {
-                                                log::error!("Failed to load admin data: {e}");
-                                                state.error_message.set(Some(format!("Failed to load admin data: {e}")));
+                                let mut state = state;
+                                spawn(async move {
+                                    match backend::verify_admin_passcode(pc.clone()).await {
+                                        Ok(true) => {
+                                            auth_error.set(false);
+                                            match load_admin_data(state).await {
+                                                Ok(()) => {
+                                                    log::info!("Admin data loaded successfully");
+                                                    state.view_state.set(ViewState::Admin);
+                                                }
+                                                Err(e) => {
+                                                    log::error!("Failed to load admin data: {e}");
+                                                    state.error_message.set(Some(format!("Failed to load admin data: {e}")));
+                                                }
                                             }
                                         }
-                                    });
-                                } else {
-                                    auth_error.set(true);
-                                    state.error_message.set(None);
-                                }
+                                        _ => {
+                                            auth_error.set(true);
+                                            state.error_message.set(None);
+                                        }
+                                    }
+                                });
                                 admin_passcode.set(String::new());
                             },
                             "{locale.admin_auth_submit}"
@@ -1534,7 +1538,6 @@ fn AdminView() -> Element {
                                         let user_sid = user.session_id.clone();
                                         let is_verified = user.is_verified;
                                         let nickname = user.nickname.clone();
-                                        let state = state;
 
                                         rsx! {
                                             tr {
@@ -1571,7 +1574,6 @@ fn AdminView() -> Element {
                                                         onclick: move |_| {
                                                             let sid = user_sid.clone();
                                                             let nick_log = nickname.clone();
-                                                            let state = state;
                                                             spawn(async move {
                                                                 let _ = toggle_verification(sid).await;
                                                                 log::info!("toggle_verification called for {nick_log}");
@@ -1625,7 +1627,6 @@ fn AdminView() -> Element {
                                         let formatted_answers = format_answers(&resp.answers, &questions);
                                         let response_id = resp.id;
                                         let display_time = resp.submitted_at.clone();
-                                        let state = state;
 
                                         rsx! {
                                             tr {
@@ -1646,7 +1647,6 @@ fn AdminView() -> Element {
                                                     button {
                                                         class: "text-xs px-3 py-1.5 rounded-lg bg-red-500/15 text-red-400 hover:bg-red-500/25 border border-red-500/20 cursor-pointer transition font-medium",
                                                         onclick: move |_| {
-                                                            let state = state;
                                                             spawn(async move {
                                                                 let _ = delete_event_response(response_id as i64).await;
                                                                 log::info!("delete_event_response called for id={response_id}");
@@ -1666,6 +1666,13 @@ fn AdminView() -> Element {
                 }
             } else {
                 // ── Menu Management Tab ──────────────────────────────
+
+                // Section title
+                h3 {
+                    class: "text-lg font-semibold text-white flex items-center gap-2",
+                    span { "🍽" }
+                    "{locale.admin_menu_title}"
+                }
 
                 // Stats row
                 div {
@@ -1693,20 +1700,28 @@ fn AdminView() -> Element {
                         p { class: "text-sm text-slate-400 font-medium", "{locale.admin_menu_add}" }
                     }
                     div {
-                        class: "flex gap-3 flex-wrap",
-                        input {
-                            class: "flex-1 min-w-[180px] bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-white text-sm placeholder-slate-600 focus:outline-none focus:ring-2 focus:ring-indigo-500 transition",
-                            r#type: "text",
-                            placeholder: "{locale.admin_menu_name_placeholder}",
-                            value: "{new_menu_name}",
-                            oninput: move |e| new_menu_name.set(e.value()),
+                        class: "flex gap-3 flex-wrap items-end",
+                        div {
+                            class: "flex-1 min-w-[180px]",
+                            label { class: "block text-xs text-slate-500 mb-1", "{locale.admin_menu_name_label}" }
+                            input {
+                                class: "w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-white text-sm placeholder-slate-600 focus:outline-none focus:ring-2 focus:ring-indigo-500 transition",
+                                r#type: "text",
+                                placeholder: "{locale.admin_menu_name_placeholder}",
+                                value: "{new_menu_name}",
+                                oninput: move |e| new_menu_name.set(e.value()),
+                            }
                         }
-                        input {
-                            class: "w-28 bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-white text-sm placeholder-slate-600 focus:outline-none focus:ring-2 focus:ring-indigo-500 transition",
-                            r#type: "number",
-                            placeholder: "{locale.admin_menu_price_placeholder}",
-                            value: "{new_menu_price}",
-                            oninput: move |e| new_menu_price.set(e.value()),
+                        div {
+                            class: "w-28",
+                            label { class: "block text-xs text-slate-500 mb-1", "{locale.admin_menu_price_label}" }
+                            input {
+                                class: "w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-white text-sm placeholder-slate-600 focus:outline-none focus:ring-2 focus:ring-indigo-500 transition",
+                                r#type: "number",
+                                placeholder: "{locale.admin_menu_price_placeholder}",
+                                value: "{new_menu_price}",
+                                oninput: move |e| new_menu_price.set(e.value()),
+                            }
                         }
                         button {
                             class: "px-4 py-2 rounded-lg bg-indigo-500 hover:bg-indigo-600 text-white text-sm font-medium cursor-pointer transition shrink-0",
@@ -1714,7 +1729,6 @@ fn AdminView() -> Element {
                                 let name = new_menu_name.read().clone();
                                 let price = new_menu_price.read().parse::<i64>().unwrap_or(0);
                                 if name.trim().is_empty() { return; }
-                                let mut state = state;
                                 spawn(async move {
                                     let _ = add_menu_item(name, price).await;
                                     new_menu_name.set(String::new());
@@ -1743,7 +1757,6 @@ fn AdminView() -> Element {
                             let item_price = item.price;
                             let is_active = item.is_active;
                             let is_editing = editing_id() == Some(item.id);
-                            let state = state;
 
                             rsx! {
                                 div {
@@ -1777,7 +1790,6 @@ fn AdminView() -> Element {
                                                     let price = edit_menu_price.read().parse::<i64>().unwrap_or(0);
                                                     let active = editing_is_active();
                                                     if name.trim().is_empty() { return; }
-                                                    let state = state;
                                                     spawn(async move {
                                                         let _ = update_menu_item(item_id as i64, name, price, active).await;
                                                         editing_id.set(None);
@@ -1823,8 +1835,7 @@ fn AdminView() -> Element {
                                                         "text-xs px-2.5 py-1 rounded-lg bg-slate-500/15 text-slate-400 border border-slate-500/20 cursor-pointer transition font-medium"
                                                     },
                                                     onclick: move |_| {
-                                                            let state = state;
-                                                            let name = name_for_toggle.clone();
+                                                        let name = name_for_toggle.clone();
                                                         spawn(async move {
                                                             let _ = update_menu_item(item_id as i64, name, item_price, !is_active).await;
                                                             let _ = load_admin_data(state).await;
@@ -1837,7 +1848,7 @@ fn AdminView() -> Element {
                                                 button {
                                                     class: "text-xs px-2.5 py-1 rounded-lg bg-indigo-500/15 text-indigo-400 border border-indigo-500/20 cursor-pointer transition font-medium",
                                                     onclick: move |_| {
-                                                            edit_menu_name.set(item_name.clone());
+                                                        edit_menu_name.set(item_name.clone());
                                                         edit_menu_price.set(item_price.to_string());
                                                         editing_is_active.set(is_active);
                                                         editing_id.set(Some(item_id));
@@ -1849,7 +1860,6 @@ fn AdminView() -> Element {
                                                 button {
                                                     class: "text-xs px-2.5 py-1 rounded-lg bg-red-500/15 text-red-400 border border-red-500/20 cursor-pointer transition font-medium",
                                                     onclick: move |_| {
-                                                        let state = state;
                                                         spawn(async move {
                                                             let _ = delete_menu_item(item_id as i64).await;
                                                             let _ = load_admin_data(state).await;

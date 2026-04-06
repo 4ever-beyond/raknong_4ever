@@ -48,6 +48,7 @@ impl Language {
 /// | Submitted / success  | `submitted_*`         |
 /// | Form utilities       | `optional_label`, etc. |
 #[derive(Clone, Debug)]
+#[allow(dead_code)] // fields are read from main.rs; LSP reports false positives
 pub struct Locale {
     // ── Branding ──────────────────────────────────────────────────────────
     /// Application display name.

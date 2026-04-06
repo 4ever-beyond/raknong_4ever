@@ -97,7 +97,7 @@ mod server_only {
     // ── Thread-local connection pool ──────────────────────────────────
 
     thread_local! {
-        static POOL: RefCell<Option<PgPool>> = RefCell::new(None);
+        static POOL: RefCell<Option<PgPool>> = const { RefCell::new(None) };
     }
 
     /// Convert a sqlx error into a ServerFnError.
@@ -839,4 +839,16 @@ pub async fn check_existing_response(
         .map_err(server_only::db_err)?;
 
     Ok(row.is_some())
+}
+
+/// Verify the admin dashboard passcode.
+///
+/// Reads the `ADMIN_PASSCODE` environment variable (falls back to
+/// `"4ever-admin-2026"` if unset) and compares it with the supplied value.
+/// Returns `Ok(true)` on match, `Ok(false)` on mismatch.
+#[server(endpoint = "verify_admin_passcode")]
+pub async fn verify_admin_passcode(passcode: String) -> Result<bool, ServerFnError> {
+    let expected =
+        std::env::var("ADMIN_PASSCODE").unwrap_or_else(|_| "4ever-admin-2026".to_string());
+    Ok(passcode.trim() == expected.trim())
 }
