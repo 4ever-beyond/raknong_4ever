@@ -109,6 +109,16 @@ pub struct Locale {
     pub err_instagram_required: &'static str,
     /// Error when Line ID is empty.
     pub err_line_required: &'static str,
+    /// Error when email is empty.
+    pub err_email_required: &'static str,
+    /// Error when email format is invalid.
+    pub err_email_invalid: &'static str,
+    /// Label for the email field.
+    pub email_label: &'static str,
+    /// Placeholder inside the email input.
+    pub email_placeholder: &'static str,
+    /// Admin table column header for email.
+    pub admin_col_email: &'static str,
 
     // ── Event View ────────────────────────────────────────────────────────
     /// Greeting shown to returning users.
@@ -390,6 +400,11 @@ pub fn get_locale(lang: Language) -> Locale {
             err_phone_required: "ขอเบอร์ด้วยน้า",
             err_instagram_required: "ใส่ไอจีด้วยจ้า",
             err_line_required: "ใส่ไลน์ไอดีด้วยน้า",
+            err_email_required: "กรุณากรอกอีเมล",
+            err_email_invalid: "รูปแบบอีเมลไม่ถูกต้อง",
+            email_label: "อีเมล",
+            email_placeholder: "example@email.com",
+            admin_col_email: "อีเมล",
 
             // Event View
             welcome_back: "สวัสดีจ้า,",
@@ -553,6 +568,11 @@ pub fn get_locale(lang: Language) -> Locale {
             err_phone_required: "Phone number is required.",
             err_instagram_required: "Instagram handle is required.",
             err_line_required: "Line ID is required.",
+            err_email_required: "Email is required",
+            err_email_invalid: "Invalid email format",
+            email_label: "Email",
+            email_placeholder: "example@email.com",
+            admin_col_email: "Email",
 
             // Event View
             welcome_back: "Welcome back,",

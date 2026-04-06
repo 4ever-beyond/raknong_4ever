@@ -27,6 +27,7 @@ pub struct UserProfile {
     pub phone: String,
     pub instagram: String,
     pub line_id: String,
+    pub email: String,
     pub is_verified: bool,
     pub created_at: String,
 }
@@ -226,6 +227,13 @@ mod server_only {
         .await
         .map_err(db_err)?;
 
+        // Add email column to user_profile if it doesn't exist yet
+        pool.execute(
+            "ALTER TABLE user_profile ADD COLUMN IF NOT EXISTS email TEXT NOT NULL DEFAULT ''",
+        )
+        .await
+        .map_err(db_err)?;
+
         // Update existing items with proper categories based on name
         pool.execute(
             "UPDATE menu_item SET category = 'Other' WHERE name LIKE 'เมนูอื่น%' AND category = 'Steaks'",
@@ -389,6 +397,7 @@ pub async fn register_profile(
     phone: String,
     instagram: String,
     line_id: String,
+    email: String,
 ) -> Result<String, ServerFnError> {
     // ── Validate ──────────────────────────────────────────────────────
     if session_id.trim().is_empty()
@@ -397,6 +406,7 @@ pub async fn register_profile(
         || phone.trim().is_empty()
         || instagram.trim().is_empty()
         || line_id.trim().is_empty()
+        || email.trim().is_empty()
     {
         return Err(ServerFnError::new("All fields are required"));
     }
@@ -419,8 +429,8 @@ pub async fn register_profile(
     // ── Insert ────────────────────────────────────────────────────────
     sqlx::query(
         r#"
-        INSERT INTO user_profile (session_id, nickname, entry_year, phone, instagram, line_id)
-        VALUES ($1, $2, $3, $4, $5, $6)
+        INSERT INTO user_profile (session_id, nickname, entry_year, phone, instagram, line_id, email)
+        VALUES ($1, $2, $3, $4, $5, $6, $7)
         "#,
     )
     .bind(session_id.trim())
@@ -429,6 +439,7 @@ pub async fn register_profile(
     .bind(phone.trim())
     .bind(instagram.trim())
     .bind(line_id.trim())
+    .bind(email.trim())
     .execute(&pool)
     .await
     .map_err(server_only::db_err)?;
@@ -627,7 +638,7 @@ pub async fn get_user_profile(session_id: String) -> Result<Option<UserProfile>,
     let pool = server_only::get_pool().await?;
 
     let row = sqlx::query(
-        "SELECT id, session_id, nickname, entry_year, phone, instagram, line_id, \
+        "SELECT id, session_id, nickname, entry_year, phone, instagram, line_id, email, \
                 is_verified, created_at \
          FROM user_profile \
          WHERE session_id = $1",
@@ -649,6 +660,7 @@ pub async fn get_user_profile(session_id: String) -> Result<Option<UserProfile>,
                 phone: r.try_get("phone").map_err(server_only::db_err)?,
                 instagram: r.try_get("instagram").map_err(server_only::db_err)?,
                 line_id: r.try_get("line_id").map_err(server_only::db_err)?,
+                email: r.try_get("email").map_err(server_only::db_err)?,
                 is_verified: r.try_get("is_verified").map_err(server_only::db_err)?,
                 created_at: created_at.to_rfc3339(),
             }))
@@ -662,7 +674,7 @@ pub async fn get_all_users() -> Result<Vec<UserProfile>, ServerFnError> {
     let pool = server_only::get_pool().await?;
 
     let rows = sqlx::query(
-        "SELECT id, session_id, nickname, entry_year, phone, instagram, line_id, \
+        "SELECT id, session_id, nickname, entry_year, phone, instagram, line_id, email, \
                 is_verified, created_at \
          FROM user_profile \
          ORDER BY created_at ASC",
@@ -683,6 +695,7 @@ pub async fn get_all_users() -> Result<Vec<UserProfile>, ServerFnError> {
                 phone: r.try_get("phone").map_err(server_only::db_err)?,
                 instagram: r.try_get("instagram").map_err(server_only::db_err)?,
                 line_id: r.try_get("line_id").map_err(server_only::db_err)?,
+                email: r.try_get("email").map_err(server_only::db_err)?,
                 is_verified: r.try_get("is_verified").map_err(server_only::db_err)?,
                 created_at: created_at.to_rfc3339(),
             })
@@ -1083,7 +1096,7 @@ pub async fn export_responses_csv() -> Result<String, ServerFnError> {
 
     let rows = sqlx::query(
         "SELECT er.id, er.session_id, er.answers, er.submitted_at,
-                up.nickname
+                up.nickname, up.email
          FROM event_response er
          LEFT JOIN user_profile up ON er.session_id = up.session_id
          ORDER BY er.submitted_at ASC",
@@ -1092,10 +1105,11 @@ pub async fn export_responses_csv() -> Result<String, ServerFnError> {
     .await
     .map_err(server_only::db_err)?;
 
-    let mut csv = String::from("#,Nickname,Menu Orders,Total (฿),Submitted At\n");
+    let mut csv = String::from("#,Nickname,Email,Menu Orders,Total (฿),Submitted At\n");
 
     for (i, row) in rows.iter().enumerate() {
         let nickname: String = row.try_get("nickname").unwrap_or_else(|_| "Unknown".into());
+        let email: String = row.try_get("email").unwrap_or_default();
         let answers: String = row.try_get("answers").unwrap_or_default();
         let submitted_at: chrono::DateTime<chrono::Utc> =
             row.try_get("submitted_at").map_err(server_only::db_err)?;
@@ -1141,9 +1155,10 @@ pub async fn export_responses_csv() -> Result<String, ServerFnError> {
         };
 
         csv.push_str(&format!(
-            "{},{},{},{},{}\n",
+            "{},{},{},{},{},{}\n",
             i + 1,
             escape_csv(&nickname),
+            escape_csv(&email),
             escape_csv(&orders),
             total,
             submitted_at.format("%Y-%m-%d %H:%M:%S UTC"),

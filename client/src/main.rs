@@ -443,51 +443,64 @@ fn OnboardingView() -> Element {
     let mut phone = use_signal(String::new);
     let mut instagram = use_signal(String::new);
     let mut line_id = use_signal(String::new);
+    let mut email = use_signal(String::new);
     let mut is_submitting = use_signal(|| false);
+
+    // Per-field inline error tracking
+    let mut field_errors: Signal<HashMap<String, String>> = use_signal(HashMap::new);
 
     let year_options = locale.year_options();
 
+    /// Basic email format check — must contain '@' and '.' and be >5 chars
+    fn is_valid_email(e: &str) -> bool {
+        e.contains('@') && e.contains('.') && e.len() > 5
+    }
+
     let on_submit = move |_| {
         let loc = get_locale((state.language)());
+        let mut errors: HashMap<String, String> = HashMap::new();
 
         let nick = nickname.read().clone();
         let year = entry_year.read().clone();
         let ph = phone.read().clone();
         let ig = instagram.read().clone();
         let line = line_id.read().clone();
+        let em = email.read().clone();
 
-        // Validate all required fields
+        // Validate all fields — collect inline errors
         if nick.trim().is_empty() {
-            state
-                .error_message
-                .set(Some(loc.err_nickname_required.to_string()));
-            return;
+            errors.insert(
+                "nickname".to_string(),
+                loc.err_nickname_required.to_string(),
+            );
         }
         if year.trim().is_empty() {
-            state
-                .error_message
-                .set(Some(loc.err_year_required.to_string()));
-            return;
+            errors.insert("year".to_string(), loc.err_year_required.to_string());
         }
         if ph.trim().is_empty() {
-            state
-                .error_message
-                .set(Some(loc.err_phone_required.to_string()));
-            return;
+            errors.insert("phone".to_string(), loc.err_phone_required.to_string());
         }
         if ig.trim().is_empty() {
-            state
-                .error_message
-                .set(Some(loc.err_instagram_required.to_string()));
-            return;
+            errors.insert(
+                "instagram".to_string(),
+                loc.err_instagram_required.to_string(),
+            );
         }
         if line.trim().is_empty() {
-            state
-                .error_message
-                .set(Some(loc.err_line_required.to_string()));
+            errors.insert("line_id".to_string(), loc.err_line_required.to_string());
+        }
+        if em.trim().is_empty() {
+            errors.insert("email".to_string(), loc.err_email_required.to_string());
+        } else if !is_valid_email(em.trim()) {
+            errors.insert("email".to_string(), loc.err_email_invalid.to_string());
+        }
+
+        if !errors.is_empty() {
+            field_errors.set(errors);
             return;
         }
 
+        field_errors.set(HashMap::new());
         is_submitting.set(true);
 
         // Capture for async block
@@ -499,9 +512,10 @@ fn OnboardingView() -> Element {
         let ph = ph.trim().to_string();
         let ig = ig.trim().to_string();
         let line = line.trim().to_string();
+        let em = em.trim().to_string();
 
         spawn(async move {
-            match register_profile(sid, nick, year, ph, ig, line).await {
+            match register_profile(sid, nick, year, ph, ig, line, em).await {
                 Ok(_) => {
                     log::info!("register_profile succeeded.");
                     // Reload profile from server
@@ -551,25 +565,47 @@ fn OnboardingView() -> Element {
                             input_type: "text".to_string(),
                             placeholder: locale.nickname_placeholder.to_string(),
                             value: nickname,
-                            on_change: move |v| nickname.set(v),
+                            on_change: move |v| {
+                                nickname.set(v);
+                                let mut fe = field_errors.write();
+                                fe.remove("nickname");
+                            },
+                            error: field_errors.read().get("nickname").cloned(),
                         }
 
                         // 2. Year (select)
-                        div {
-                            class: "space-y-1.5",
-                            label {
-                                class: "block text-sm font-medium text-slate-300",
-                                "{locale.year_label}"
-                                span { class: "text-indigo-400 ml-1", "*" }
-                            }
-                            select {
-                                class: "w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-white focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition appearance-none cursor-pointer",
-                                value: "{entry_year}",
-                                onchange: move |e| entry_year.set(e.value()),
-                                option { value: "", disabled: true, "{locale.year_placeholder}" }
-                                {year_options.iter().map(|opt| rsx! {
-                                    option { key: "{opt}", value: "{opt}", "{opt}" }
-                                })}
+                        {
+                            let year_err = field_errors.read().get("year").cloned();
+                            let year_has_err = year_err.as_ref().is_some();
+                            rsx! {
+                                div {
+                                    class: "space-y-1.5",
+                                    label {
+                                        class: "block text-sm font-medium text-slate-300",
+                                        "{locale.year_label}"
+                                        span { class: "text-indigo-400 ml-1", "*" }
+                                    }
+                                    select {
+                                        class: if year_has_err {
+                                            "w-full bg-red-500/10 border-2 border-red-500/40 rounded-xl px-4 py-3 text-white focus:outline-none focus:ring-2 focus:ring-red-500 transition appearance-none cursor-pointer"
+                                        } else {
+                                            "w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-white focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition appearance-none cursor-pointer"
+                                        },
+                                        value: "{entry_year}",
+                                        onchange: move |e| {
+                                            entry_year.set(e.value());
+                                            let mut fe = field_errors.write();
+                                            fe.remove("year");
+                                        },
+                                        option { value: "", disabled: true, "{locale.year_placeholder}" }
+                                        {year_options.iter().map(|opt| rsx! {
+                                            option { key: "{opt}", value: "{opt}", "{opt}" }
+                                        })}
+                                    }
+                                    {year_err.map(|err| rsx! {
+                                        p { class: "text-xs text-red-400 mt-1", "{err}" }
+                                    })}
+                                }
                             }
                         }
 
@@ -580,7 +616,12 @@ fn OnboardingView() -> Element {
                             input_type: "tel".to_string(),
                             placeholder: locale.phone_placeholder.to_string(),
                             value: phone,
-                            on_change: move |v| phone.set(v),
+                            on_change: move |v| {
+                                phone.set(v);
+                                let mut fe = field_errors.write();
+                                fe.remove("phone");
+                            },
+                            error: field_errors.read().get("phone").cloned(),
                         }
 
                         // 4. Instagram
@@ -590,7 +631,12 @@ fn OnboardingView() -> Element {
                             input_type: "text".to_string(),
                             placeholder: locale.instagram_placeholder.to_string(),
                             value: instagram,
-                            on_change: move |v| instagram.set(v),
+                            on_change: move |v| {
+                                instagram.set(v);
+                                let mut fe = field_errors.write();
+                                fe.remove("instagram");
+                            },
+                            error: field_errors.read().get("instagram").cloned(),
                         }
 
                         // 5. Line ID
@@ -600,7 +646,27 @@ fn OnboardingView() -> Element {
                             input_type: "text".to_string(),
                             placeholder: locale.line_placeholder.to_string(),
                             value: line_id,
-                            on_change: move |v| line_id.set(v),
+                            on_change: move |v| {
+                                line_id.set(v);
+                                let mut fe = field_errors.write();
+                                fe.remove("line_id");
+                            },
+                            error: field_errors.read().get("line_id").cloned(),
+                        }
+
+                        // 6. Email
+                        FormField {
+                            label: locale.email_label.to_string(),
+                            required: true,
+                            input_type: "email".to_string(),
+                            placeholder: locale.email_placeholder.to_string(),
+                            value: email,
+                            on_change: move |v| {
+                                email.set(v);
+                                let mut fe = field_errors.write();
+                                fe.remove("email");
+                            },
+                            error: field_errors.read().get("email").cloned(),
                         }
 
                         // Submit
@@ -873,6 +939,7 @@ fn EventView() -> Element {
     let mut passcode = use_signal(String::new);
     let mut is_submitting = use_signal(|| false);
     let mut passcode_error = use_signal(|| false);
+    let mut question_error_idx: Signal<Option<usize>> = use_signal(|| None);
 
     let on_submit = move |_| {
         let loc = get_locale((state.language)());
@@ -900,6 +967,7 @@ fn EventView() -> Element {
                         ans.trim().is_empty()
                     };
                     if is_empty {
+                        question_error_idx.set(Some(i));
                         state
                             .error_message
                             .set(Some(format!("{}{}", loc.err_answer_prefix, q.label)));
@@ -909,6 +977,7 @@ fn EventView() -> Element {
             }
         }
 
+        question_error_idx.set(None);
         passcode_error.set(false);
         is_submitting.set(true);
 
@@ -1134,10 +1203,15 @@ fn EventView() -> Element {
                             .and_then(|opts| serde_json::from_str(opts).ok())
                             .unwrap_or_default();
 
+                        let has_error = question_error_idx() == Some(index);
                         rsx! {
                             div {
                                 key: "q_{question.id}",
-                                class: "space-y-2",
+                                class: if has_error {
+                                    "space-y-2 bg-red-500/5 border border-red-500/20 rounded-xl p-3 -mx-3"
+                                } else {
+                                    "space-y-2"
+                                },
 
                                 label {
                                     class: "block text-sm font-medium text-slate-300",
@@ -1657,6 +1731,7 @@ fn AdminView() -> Element {
                                         th { class: "px-4 py-3 text-slate-400 font-medium hidden md:table-cell", "{locale.admin_col_phone}" }
                                         th { class: "px-4 py-3 text-slate-400 font-medium hidden md:table-cell", "{locale.admin_col_instagram}" }
                                         th { class: "px-4 py-3 text-slate-400 font-medium hidden lg:table-cell", "{locale.admin_col_line}" }
+                                        th { class: "px-4 py-3 text-slate-400 font-medium hidden lg:table-cell", "{locale.admin_col_email}" }
                                         th { class: "px-4 py-3 text-slate-400 font-medium", "{locale.admin_col_status}" }
                                         th { class: "px-4 py-3 text-slate-400 font-medium", "{locale.admin_col_action}" }
                                     }
@@ -1677,6 +1752,7 @@ fn AdminView() -> Element {
                                                 td { class: "px-4 py-3 text-slate-400 hidden md:table-cell", "{user.phone}" }
                                                 td { class: "px-4 py-3 text-slate-400 hidden md:table-cell", "{user.instagram}" }
                                                 td { class: "px-4 py-3 text-slate-400 hidden lg:table-cell", "{user.line_id}" }
+                                                td { class: "px-4 py-3 text-slate-400 hidden lg:table-cell", "{user.email}" }
                                                 td {
                                                     class: "px-4 py-3",
                                                     if is_verified {
@@ -2543,7 +2619,9 @@ fn FormField(
     placeholder: String,
     value: Signal<String>,
     on_change: EventHandler<String>,
+    error: Option<String>,
 ) -> Element {
+    let has_error = error.is_some();
     rsx! {
         div {
             class: "space-y-1.5",
@@ -2555,12 +2633,19 @@ fn FormField(
                 }
             }
             input {
-                class: "w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-white placeholder-slate-600 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition",
+                class: if has_error {
+                    "w-full bg-red-500/10 border-2 border-red-500/40 rounded-xl px-4 py-3 text-white placeholder-slate-600 focus:outline-none focus:ring-2 focus:ring-red-500 transition"
+                } else {
+                    "w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-white placeholder-slate-600 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition"
+                },
                 r#type: "{input_type}",
                 placeholder: "{placeholder}",
                 value: "{value}",
                 oninput: move |e| on_change.call(e.value()),
             }
+            {error.map(|err| rsx! {
+                p { class: "text-xs text-red-400 mt-1", "{err}" }
+            })}
         }
     }
 }
